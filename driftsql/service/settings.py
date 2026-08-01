@@ -25,6 +25,8 @@ class ServiceSettings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     auth_enabled: bool = False
     api_key: SecretStr | None = None
+    auth_session_ttl_seconds: int = Field(default=28800, ge=60, le=604800)
+    auth_cookie_secure: bool = False
 
     model_backend: Literal["vllm", "scripted"] = "vllm"
     base_model_path: Path = PROJECT_ROOT / "models/Qwen2.5-Coder-7B-Instruct"
@@ -51,6 +53,7 @@ class ServiceSettings(BaseSettings):
     tool_config_path: Path = PROJECT_ROOT / "configs/tools/drift_tools.yaml"
     repository_path: Path = PROJECT_ROOT / "data/service/driftsql_service.sqlite"
     temporary_root: Path = PROJECT_ROOT / "data/tmp/service"
+    replay_review_dir: Path = PROJECT_ROOT / "data/processed/p4_replay_review"
     serve_frontend: bool = True
     frontend_dist_path: Path = PROJECT_ROOT / "frontend/dist"
 
@@ -62,7 +65,7 @@ class ServiceSettings(BaseSettings):
     wandb_max_runs: int = Field(default=20, ge=1, le=100)
 
     @model_validator(mode="after")
-    def require_api_key_when_auth_is_enabled(self) -> "ServiceSettings":
+    def require_api_key_when_auth_is_enabled(self) -> ServiceSettings:
         if self.auth_enabled and (
             self.api_key is None or not self.api_key.get_secret_value().strip()
         ):

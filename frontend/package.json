@@ -7,6 +7,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "accept:p4:record": "node scripts/record-p4-acceptance.mjs",
+    "accept:replay-review": "node scripts/accept-replay-review.mjs",
+    "accept:auth-session": "node scripts/accept-auth-session.mjs",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest"

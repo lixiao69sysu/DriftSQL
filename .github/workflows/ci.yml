@@ -20,7 +20,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install ".[dev,service]"
       - name: Portable core tests
-        run: python -m pytest tests/test_metric_drift.py tests/test_mvp.py tests/test_drift_factory.py
+        run: python -m pytest tests/test_metric_drift.py tests/test_mvp.py tests/test_drift_factory.py tests/test_p5_freeze_gate.py
       - name: Compile source and automation scripts
         run: python -m compileall -q driftsql scripts
 
@@ -39,3 +39,12 @@ jobs:
       - run: npm ci
       - run: npm test -- --run
       - run: npm run build
+
+  container-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible frontend stage
+        run: docker build --target frontend-build -t driftsql-frontend-contract .
+      - name: Validate Compose contract
+        run: docker compose config --quiet

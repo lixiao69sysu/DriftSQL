@@ -39,6 +39,12 @@ const labels: Record<string, string> = {
   budget_exhausted: "预算耗尽",
   service_error: "服务异常",
   task_failure: "任务失败",
+  wrong_submit: "错误提交",
+  turn_limit: "轮数耗尽",
+  tool_budget: "工具预算耗尽",
+  pending: "待审核",
+  approve: "已批准",
+  reject: "已拒绝",
 };
 
 export function zhLabel(value: string | null | undefined, fallback = "—"): string {

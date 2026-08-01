@@ -2,9 +2,11 @@
 
 from fastapi import Request
 
+from driftsql.service.auth import AuthSessionStore
 from driftsql.service.catalog import ExperimentCatalog, ScenarioCatalog
 from driftsql.service.inference import SessionOrchestrator
 from driftsql.service.observability import OperationsService, WandbService
+from driftsql.service.replay import ReplayReviewStore
 from driftsql.service.repository import SQLiteSessionRepository
 from driftsql.service.settings import ServiceSettings
 
@@ -35,3 +37,11 @@ async def get_operations(request: Request) -> OperationsService:
 
 async def get_wandb(request: Request) -> WandbService:
     return request.app.state.wandb
+
+
+async def get_replay_reviews(request: Request) -> ReplayReviewStore:
+    return request.app.state.replay_reviews
+
+
+async def get_auth_sessions(request: Request) -> AuthSessionStore:
+    return request.app.state.auth_sessions

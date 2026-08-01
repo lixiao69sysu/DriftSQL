@@ -9,7 +9,6 @@ import random
 from collections import Counter, defaultdict
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -35,6 +34,12 @@ def main() -> None:
 
     candidates = {row["candidate_id"]: row for row in load_jsonl(args.review_dir / "candidates.jsonl")}
     reviews = {row["candidate_id"]: row for row in load_jsonl(args.review_dir / "reviews.jsonl")}
+    for candidate_id, review in reviews.items():
+        candidate = candidates.get(candidate_id)
+        if candidate is None:
+            raise RuntimeError(f"Review references unknown candidate: {candidate_id}")
+        if review.get("candidate_trajectory_sha256") != candidate.get("trajectory_sha256"):
+            raise RuntimeError(f"Review hash does not match immutable candidate: {candidate_id}")
     approved = [
         (candidates[candidate_id], review)
         for candidate_id, review in reviews.items()
@@ -92,6 +97,7 @@ def main() -> None:
     summary = {
         "protocol": "driftsql_p5_human_reviewed_failure_replay_v1",
         "approved_candidates": len(approved),
+        "approved_candidate_ids": sorted(candidate["candidate_id"] for candidate, _ in approved),
         "output_rows": len(output),
         "failure_classes": dict(sorted(Counter(row[0]["failure_class"] for row in approved).items())),
         "source_database_ids": sorted({row["db_id"] for row in output}),
@@ -102,7 +108,10 @@ def main() -> None:
         "stage8_gate55_read": False,
         "seed": args.seed,
     }
-    (args.output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (args.output_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 

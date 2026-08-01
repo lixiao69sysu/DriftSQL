@@ -3,20 +3,23 @@ import { useMemo, useState } from "react";
 import { compactHash, formatDate, formatDuration } from "../utils";
 import { zhLabel } from "../locale";
 import { selectMetricSeries } from "../metrics";
-import type { FailureList, OperationsSummary, WandbMetricSeries, WandbRunHistory, WandbRunList } from "../types";
+import type { FailureList, OperationsSummary, ReplayCandidateList, WandbMetricSeries, WandbRunHistory, WandbRunList } from "../types";
 import { Icon } from "./Icon";
 import { StatusBadge } from "./StatusBadge";
+import { ReplayReviewPanel } from "./ReplayReviewPanel";
 
 interface Props {
   summary: OperationsSummary | null;
   failures: FailureList | null;
   wandb: WandbRunList | null;
   wandbHistory: WandbRunHistory | null;
+  replay: ReplayCandidateList | null;
   loading: boolean;
   onRefresh: () => void;
   onFailureFilter: (failureType: string) => void;
   onReplay: (sessionId: string) => void;
   onWandbRun: (runId: string) => void;
+  onReview: (candidateId: string, decision: "approve" | "reject", reviewer: string, reason: string) => Promise<void>;
 }
 
 function percent(value: number): string {
@@ -55,11 +58,13 @@ export function OperationsDashboard({
   failures,
   wandb,
   wandbHistory,
+  replay,
   loading,
   onRefresh,
   onFailureFilter,
   onReplay,
   onWandbRun,
+  onReview,
 }: Props) {
   const [failureType, setFailureType] = useState("");
   const maxDaily = Math.max(1, ...(summary?.daily_metrics.map((item) => item.sessions) ?? []));
@@ -154,6 +159,8 @@ export function OperationsDashboard({
               {(failures?.failures.length ?? 0) === 0 && <div className="ops-empty">当前筛选条件下没有失败轨迹。</div>}
             </div>
           </section>
+
+          <ReplayReviewPanel replay={replay} onReplay={onReplay} onReview={onReview} />
 
           <div className="ops-grid bottom-grid">
             <section className="panel ops-card deployment-card">

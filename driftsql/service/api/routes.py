@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from hmac import compare_digest
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 
+from driftsql.service.auth import AuthSessionStore
 from driftsql.service.catalog import (
     ExperimentCatalog,
     ScenarioCatalog,
@@ -18,14 +20,24 @@ from driftsql.service.catalog import (
 from driftsql.service.inference import SessionOrchestrator
 from driftsql.service.inference.orchestrator import SessionConflictError
 from driftsql.service.observability import OperationsService, WandbService
+from driftsql.service.replay import (
+    ReplayCandidateNotFoundError,
+    ReplayReviewStore,
+    ReplayReviewUnavailableError,
+)
 from driftsql.service.repository import SessionNotFoundError, SQLiteSessionRepository
 from driftsql.service.schemas import (
+    AuthLogin,
+    AuthStatus,
     DatabaseRead,
     ExperimentList,
     FailureList,
     HealthRead,
     ModelMetadata,
     OperationsSummary,
+    ReplayCandidateList,
+    ReplayCandidateRead,
+    ReplayReviewCreate,
     RunCreate,
     ScenarioRead,
     SessionCreate,
@@ -38,16 +50,79 @@ from driftsql.service.schemas import (
 from driftsql.service.settings import ServiceSettings
 
 from .dependencies import (
+    get_auth_sessions,
     get_catalog,
     get_experiment_catalog,
     get_operations,
     get_orchestrator,
+    get_replay_reviews,
     get_repository,
     get_settings,
     get_wandb,
 )
 
 router = APIRouter()
+AUTH_COOKIE = "driftsql_session"
+
+
+@router.get("/auth/status", response_model=AuthStatus, tags=["authentication"], summary="Browser authentication status")
+async def auth_status(
+    request: Request,
+    settings: Annotated[ServiceSettings, Depends(get_settings)],
+    sessions: Annotated[AuthSessionStore, Depends(get_auth_sessions)],
+) -> AuthStatus:
+    if not settings.auth_enabled:
+        return AuthStatus(enabled=False, authenticated=True)
+    authenticated = sessions.validate(request.cookies.get(AUTH_COOKIE))
+    return AuthStatus(enabled=True, authenticated=authenticated)
+
+
+@router.post(
+    "/auth/login",
+    response_model=AuthStatus,
+    tags=["authentication"],
+    summary="Exchange API key for HttpOnly browser session",
+)
+async def auth_login(
+    body: AuthLogin,
+    settings: Annotated[ServiceSettings, Depends(get_settings)],
+    sessions: Annotated[AuthSessionStore, Depends(get_auth_sessions)],
+) -> JSONResponse:
+    if not settings.auth_enabled:
+        return JSONResponse(AuthStatus(enabled=False, authenticated=True).model_dump(mode="json"))
+    expected = settings.api_key.get_secret_value() if settings.api_key else ""
+    supplied = body.api_key.get_secret_value()
+    if not supplied or not compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Invalid DriftSQL API key")
+    token, expires_at = sessions.create()
+    payload = AuthStatus(enabled=True, authenticated=True, expires_at=expires_at)
+    response = JSONResponse(payload.model_dump(mode="json"))
+    response.set_cookie(
+        key=AUTH_COOKIE,
+        value=token,
+        max_age=settings.auth_session_ttl_seconds,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
+@router.post("/auth/logout", response_model=AuthStatus, tags=["authentication"], summary="Revoke browser session")
+async def auth_logout(
+    request: Request,
+    settings: Annotated[ServiceSettings, Depends(get_settings)],
+    sessions: Annotated[AuthSessionStore, Depends(get_auth_sessions)],
+) -> JSONResponse:
+    sessions.revoke(request.cookies.get(AUTH_COOKIE))
+    payload = AuthStatus(
+        enabled=settings.auth_enabled,
+        authenticated=not settings.auth_enabled,
+    )
+    response = JSONResponse(payload.model_dump(mode="json"))
+    response.delete_cookie(AUTH_COOKIE, path="/")
+    return response
 
 
 @router.get("/health", response_model=HealthRead, tags=["operations"], summary="Service readiness")
@@ -128,6 +203,43 @@ async def failures(
         failure_type=failure_type,
         drift_type=drift_type,
     )
+
+
+@router.get(
+    "/api/replay/candidates",
+    response_model=ReplayCandidateList,
+    tags=["replay"],
+    summary="List immutable P4 failure candidates and latest human decisions",
+)
+async def replay_candidates(
+    reviews: Annotated[ReplayReviewStore, Depends(get_replay_reviews)],
+    review_status: str | None = Query(default=None, pattern="^(pending|approve|reject)$"),
+) -> ReplayCandidateList:
+    try:
+        return reviews.list_candidates(review_status=review_status)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post(
+    "/api/replay/candidates/{candidate_id}/reviews",
+    response_model=ReplayCandidateRead,
+    tags=["replay"],
+    summary="Append a hash-bound human replay decision",
+)
+async def review_replay_candidate(
+    candidate_id: str,
+    body: ReplayReviewCreate,
+    reviews: Annotated[ReplayReviewStore, Depends(get_replay_reviews)],
+) -> ReplayCandidateRead:
+    try:
+        return reviews.review(candidate_id, body)
+    except ReplayCandidateNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Replay candidate not found") from error
+    except ReplayReviewUnavailableError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get(
@@ -270,7 +382,12 @@ async def stream_events(
                 yield ": keepalive\n\n"
                 continue
             payload = event.model_dump(mode="json")
-            yield f"id: {event.sequence}\nevent: {event.event_type.value}\ndata: {json.dumps(payload)}\n\n"
+            # `error` is reserved by the browser EventSource API for transport
+            # failures. Keep the persisted EventType unchanged, but use a
+            # distinct wire name so recoverable Agent errors do not look like
+            # a disconnected stream.
+            wire_type = "agent_error" if event.event_type.value == "error" else event.event_type.value
+            yield f"id: {event.sequence}\nevent: {wire_type}\ndata: {json.dumps(payload)}\n\n"
 
     return StreamingResponse(
         generate(),

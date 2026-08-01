@@ -354,7 +354,8 @@ the distinction between training-rollout reward and held-out evaluation.
 9. **Complete for Dataset V2:** 1,102 execution-verified atomic, compound, and
    clean-control trajectories; database-disjoint Train/Dev/Test; variable
    interaction profiles; and 5,060 next-action SFT examples. Metric-definition
-   drift remains a later extension.
+   drift now has an execution-verified factory and uses the same isolated
+   reward path; expanding it into a formal dataset split remains P5 follow-up.
 10. Add failure mining and replay.
 11. Add clean/drift/cost/safety regression gates.
 12. **Product P0-P3 complete:** FastAPI contracts, persistent frozen SFT20

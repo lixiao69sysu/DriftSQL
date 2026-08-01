@@ -18,6 +18,8 @@ The Chinese `运行监控` workspace provides:
 - failure classification into task failure, unsafe operation, timeout, budget
   exhaustion, cancellation and service error;
 - failure filtering and one-click replay of the original full trajectory;
+- immutable P4 failure candidates with hash-bound, append-only human
+  approve/reject decisions in the Chinese Replay review panel;
 - optional W&B run discovery for reward, KL, loss, learning-rate, throughput
   and validation/test summary metrics, plus sampled in-Studio training curves.
 
@@ -30,11 +32,13 @@ names; arbitrary run configuration and host metadata are not returned.
 ```text
 GET /api/observability/summary
 GET /api/observability/failures?failure_type=task_failure
+GET /api/replay/candidates
+POST /api/replay/candidates/{candidate_id}/reviews
 GET /api/observability/wandb/runs
 GET /api/observability/wandb/runs/{run_id}/history
 ```
 
-The product OpenAPI now describes 15 JSON/SSE interfaces. Failure records carry
+The product OpenAPI describes all JSON/SSE and review interfaces. Failure records carry
 the Session ID required by the existing trajectory endpoint, so replay uses the
 same durable evidence as the Agent debugger rather than a copied summary.
 
@@ -68,9 +72,9 @@ TMPDIR=/tmp .venv/bin/python -m pytest tests/service -q
 TMPDIR=/tmp .venv/bin/python -m pytest -q
 ```
 
-P4 acceptance on 2026-08-01 passed TypeScript compilation, 6 frontend tests,
-8 product-service tests and 99 total Python tests. The production bundle is
-230.73 kB JavaScript (71.78 kB gzip) and 29.08 kB CSS (7.25 kB gzip). The only
-Python warning is the existing Ray deprecation warning from the external
-`lcpy311` environment. Machine-readable evidence is stored at
-`reports/service/p4_acceptance.json`.
+The real-model P4 acceptance used Qwen2.5-Coder-7B-Instruct with the frozen
+Stage-8 SFT20 Adapter, persisted its complete trajectory, and exercised the
+Chinese Studio and W&B curve view. Machine-readable evidence is stored at
+`reports/service/p4_real_acceptance.json`; browser recordings and screenshots
+are under `artifacts/p4_real_acceptance/`. Replay-review and authentication
+browser acceptances are separate so they never create fake human decisions.

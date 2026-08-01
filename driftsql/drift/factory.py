@@ -24,6 +24,7 @@ from sqlglot import exp, parse_one
 
 from driftsql.planning import analyze_wildcard_projection, plan_projection_contract
 
+from .metric import MetricDefinitionChange
 from .schema import SchemaDiff
 
 _TOKEN_SYNONYMS = {
@@ -550,6 +551,15 @@ def _materialize_schema_operation(
             default_sql=str(operation.get("default_sql", "0")),
         )
         return
+    if operation_type == "metric_definition_change":
+        # A metric-definition drift changes governed query semantics, not the
+        # physical SQLite schema. The active episode still receives an
+        # isolated copy so execution and reward verification keep the same
+        # safety boundary as physical schema drifts.
+        if target.exists():
+            raise FileExistsError(target)
+        _copy_database(source, target)
+        return
     else:
         raise NotImplementedError(
             f"Unsupported schema operation: {operation_type}"
@@ -1050,6 +1060,81 @@ def build_add_column_star_example(**kwargs: Any) -> DriftExample:
     return build_add_column_projection_example(**kwargs)
 
 
+def build_metric_definition_example(
+    *,
+    source: str,
+    source_index: int,
+    db_id: str,
+    question: str,
+    evidence: str,
+    sql: str,
+    database: Path,
+    change: MetricDefinitionChange,
+) -> DriftExample:
+    """Build a metric-drift episode whose semantic change is execution verified.
+
+    Both definitions must execute successfully and produce different result
+    fingerprints. This rejects cosmetic rewrites and makes the active
+    fingerprint suitable for the normal Agentic reward path.
+    """
+
+    database = Path(database).resolve()
+    if not database.is_file():
+        raise FileNotFoundError(database)
+    tree = parse_one(sql, read="sqlite")
+    if not isinstance(tree, (exp.Query, exp.Subquery)):
+        raise ValueError("Only read queries can seed metric-drift examples")
+
+    stale_fingerprint = fingerprint_query(database, sql)
+    repaired_sql = change.rewrite(sql)
+    repaired_fingerprint = fingerprint_query(database, repaired_sql)
+    if stale_fingerprint == repaired_fingerprint:
+        raise ValueError("Metric definition change did not alter the executed result")
+
+    schema_diff = SchemaDiff(db_id, "v1", "v2", (change.as_operation(),))
+    oracle_steps = _recovery_oracle_steps(
+        db_id=db_id,
+        stale_sql=sql,
+        stale_observation={
+            "ok": True,
+            "error": None,
+            "semantic_mismatch": True,
+            "metric_version": change.from_version,
+            "row_count": stale_fingerprint.row_count,
+            "value_hash": stale_fingerprint.value_hash,
+        },
+        repaired_sql=repaired_sql,
+        repaired_fingerprint=repaired_fingerprint,
+        schema_diff=schema_diff,
+    )
+    task_hash = _task_hash(
+        source,
+        source_index,
+        db_id,
+        "metric_definition_change",
+        change.metric_name,
+        change.from_version,
+        change.to_version,
+        change.old_expression,
+        change.new_expression,
+    )
+    return DriftExample(
+        task_id=f"drift_metric_{task_hash}",
+        source=source,
+        source_index=source_index,
+        db_id=db_id,
+        question=question,
+        evidence=evidence,
+        source_db=str(database),
+        stale_sql=sql,
+        repaired_sql=repaired_sql,
+        schema_diff=schema_diff,
+        stale_error="semantic_metric_definition_mismatch",
+        result_fingerprint=repaired_fingerprint,
+        oracle_steps=oracle_steps,
+    )
+
+
 def build_clean_example(
     *,
     source: str,
@@ -1238,11 +1323,14 @@ def _recovery_oracle_steps(
         {
             "action": "get_schema_version",
             "arguments": {},
-            "observation": {"db_id": db_id, "version": "v2"},
+            "observation": {"db_id": db_id, "version": schema_diff.to_version},
         },
         {
             "action": "inspect_schema_diff",
-            "arguments": {"from_version": "v1", "to_version": "v2"},
+            "arguments": {
+                "from_version": schema_diff.from_version,
+                "to_version": schema_diff.to_version,
+            },
             "observation": schema_diff.to_observation(),
         },
         {

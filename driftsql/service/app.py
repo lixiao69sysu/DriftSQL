@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import mimetypes
-from hmac import compare_digest
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from driftsql.service.api import router
+from driftsql.service.api.routes import AUTH_COOKIE
+from driftsql.service.auth import AuthSessionStore
 from driftsql.service.catalog import ExperimentCatalog, ScenarioCatalog
 from driftsql.service.inference import ModelBackend, ScriptedModelBackend, SessionOrchestrator, ToolRuntime, VLLMBackend
 from driftsql.service.observability import OperationsService, WandbService
+from driftsql.service.replay import ReplayReviewStore
 from driftsql.service.repository import SQLiteSessionRepository
 from driftsql.service.settings import ServiceSettings
 
@@ -65,6 +68,8 @@ def create_app(
         application.state.orchestrator = orchestrator
         application.state.operations = OperationsService(repository)
         application.state.wandb = WandbService(resolved_settings)
+        application.state.replay_reviews = ReplayReviewStore(resolved_settings.replay_review_dir)
+        application.state.auth_sessions = AuthSessionStore(resolved_settings.auth_session_ttl_seconds)
         application.state.interrupted_sessions = interrupted
         try:
             yield
@@ -94,7 +99,11 @@ def create_app(
             if bearer.startswith("Bearer ")
             else request.headers.get("x-driftsql-api-key", "").strip()
         )
-        if not supplied or not compare_digest(supplied, expected):
+        cookie_authenticated = request.app.state.auth_sessions.validate(
+            request.cookies.get(AUTH_COOKIE)
+        )
+        header_authenticated = bool(supplied) and compare_digest(supplied, expected)
+        if not cookie_authenticated and not header_authenticated:
             return JSONResponse(
                 {"detail": "Invalid or missing DriftSQL API key"},
                 status_code=401,

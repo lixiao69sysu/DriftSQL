@@ -41,3 +41,41 @@ TMPDIR=/tmp .venv/bin/python scripts/verify_p5_protocol.py
 The builder refuses to overwrite an existing protocol or seal. `--seal-only`
 exists solely to recover a missing seal after validating the already-frozen P5
 Gate hash; it does not rebuild or parse either Gate.
+
+## Human-reviewed replay and training
+
+P4 failures are immutable candidates, not automatically trusted labels. Review
+them in the Chinese Studio or through `POST /api/replay/candidates/{id}/reviews`.
+Every append-only decision is bound to the trajectory SHA-256. Only approved
+failure strata may sample new rows, and those rows always come from P5 Train;
+the original P4 Tune row is never copied into optimization data.
+
+```bash
+TMPDIR=/tmp .venv/bin/python scripts/build_p5_reviewed_replay.py
+TMPDIR=/tmp .venv/bin/python scripts/prepare_p5_grpo.py
+TMPDIR=/tmp .venv/bin/python scripts/verify_p5_training_inputs.py
+CUDA_VISIBLE_DEVICES=0,2 bash scripts/train_7b_p5_reviewed_grpo.sh
+```
+
+The preparation step fails closed when there are no real approvals, when a
+review hash is stale, or when any Train/Tune/Gate database overlap is found.
+W&B receives the P5 GRPO training metrics; the sealed Gate is not read.
+
+## Tune selection and one-shot Gate
+
+```bash
+CUDA_VISIBLE_DEVICES=0,2,3 bash scripts/run_p5_tune_matrix.sh
+TMPDIR=/tmp .venv/bin/python scripts/freeze_p5_candidate.py
+TMPDIR=/tmp .venv/bin/python scripts/prepare_p5_gate_eval.py
+TMPDIR=/tmp .venv/bin/python scripts/eval_p5_frozen_gate.py --gpus 0,2,3
+TMPDIR=/tmp .venv/bin/python scripts/finalize_p5_gate.py
+```
+
+Tune compares frozen SFT20 with P5 GRPO steps 5 and 10 using the same budget.
+Selection prioritizes overall success, then the 12-row turn-limit hard slice,
+then lower interaction cost; SFT20 wins an exact tie. Candidate files, input
+data, code, reports, thresholds and inference budget are hashed before the Gate
+can be opened. The first Gate-open attempt creates an exclusive lifecycle file
+before reading any row, so even a failed attempt cannot be repeated as a new
+selection opportunity. Finalization records the one-shot result and permanent
+seal; it never feeds failures back into training.

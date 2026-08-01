@@ -4,6 +4,7 @@ import { api, subscribeToEvents } from "./api";
 import { CodeBlock } from "./components/CodeBlock";
 import { Icon } from "./components/Icon";
 import { OperationsDashboard } from "./components/OperationsDashboard";
+import { LoginScreen } from "./components/LoginScreen";
 import { RewardPanel } from "./components/RewardPanel";
 import { RunConfiguration } from "./components/RunConfiguration";
 import { ScenarioOverview } from "./components/ScenarioOverview";
@@ -15,10 +16,12 @@ import { initialLiveState, liveTrajectoryReducer } from "./state";
 import { streamLabel, zhLabel } from "./locale";
 import type {
   Experiment,
+  AuthStatus,
   FailureList,
   Health,
   OperationsSummary,
   RewardResult,
+  ReplayCandidateList,
   RunOptions,
   Scenario,
   Session,
@@ -38,6 +41,7 @@ const defaultOptions: RunOptions = {
 const preferredDemoScenario = "drift_coladd_336a8e6d4010d75e";
 
 export default function App() {
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -54,6 +58,7 @@ export default function App() {
   const [failures, setFailures] = useState<FailureList | null>(null);
   const [wandb, setWandb] = useState<WandbRunList | null>(null);
   const [wandbHistory, setWandbHistory] = useState<WandbRunHistory | null>(null);
+  const [replay, setReplay] = useState<ReplayCandidateList | null>(null);
   const [operationsLoading, setOperationsLoading] = useState(false);
 
   const scenario = useMemo(
@@ -61,6 +66,24 @@ export default function App() {
     [scenarios, selectedScenarioId],
   );
   const running = live.session ? !terminalStatuses.has(live.session.status) && live.session.status !== "created" : false;
+
+  const bootstrap = useCallback(async () => {
+    const [nextHealth, nextScenarios, nextSessions, nextExperiments] = await Promise.all([
+      api.health(),
+      api.scenarios(),
+      api.sessions(),
+      api.experiments(),
+    ]);
+    setHealth(nextHealth);
+    setScenarios(nextScenarios);
+    setSessions(nextSessions.sessions);
+    setExperiments(nextExperiments.experiments);
+    setSelectedScenarioId(
+      nextScenarios.find((item) => item.scenario_id === preferredDemoScenario)?.scenario_id
+        ?? nextScenarios[0]?.scenario_id
+        ?? null,
+    );
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     const response = await api.sessions();
@@ -78,14 +101,16 @@ export default function App() {
   const loadOperations = useCallback(async () => {
     setOperationsLoading(true);
     try {
-      const [nextOperations, nextFailures, nextWandb] = await Promise.all([
+      const [nextOperations, nextFailures, nextWandb, nextReplay] = await Promise.all([
         api.operations(),
         api.failures(),
         api.wandbRuns(),
+        api.replayCandidates(),
       ]);
       setOperations(nextOperations);
       setFailures(nextFailures);
       setWandb(nextWandb);
+      setReplay(nextReplay);
       if (nextWandb.status === "ready" && nextWandb.runs.length > 0) {
         setWandbHistory(await api.wandbHistory(nextWandb.runs[0].run_id));
       } else {
@@ -100,22 +125,15 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.health(), api.scenarios(), api.sessions(), api.experiments()])
-      .then(([nextHealth, nextScenarios, nextSessions, nextExperiments]) => {
+    api.authStatus()
+      .then(async (nextAuth) => {
         if (cancelled) return;
-        setHealth(nextHealth);
-        setScenarios(nextScenarios);
-        setSessions(nextSessions.sessions);
-        setExperiments(nextExperiments.experiments);
-        setSelectedScenarioId(
-          nextScenarios.find((item) => item.scenario_id === preferredDemoScenario)?.scenario_id
-            ?? nextScenarios[0]?.scenario_id
-            ?? null,
-        );
+        setAuth(nextAuth);
+        if (nextAuth.authenticated) await bootstrap();
       })
       .catch((error: unknown) => setFatalError(error instanceof Error ? error.message : String(error)));
     return () => { cancelled = true; };
-  }, []);
+  }, [bootstrap]);
 
   useEffect(() => {
     if (view === "operations" && operations === null) {
@@ -203,8 +221,20 @@ export default function App() {
     }
   }
 
-  if (!health && !fatalError) {
+  if (!auth && !fatalError) {
     return <div className="boot-screen"><div className="boot-mark"><Icon name="activity" /></div><span>正在启动 DriftSQL 智能体工作台</span><i /></div>;
+  }
+
+  if (auth?.enabled && !auth.authenticated) {
+    return <LoginScreen onLogin={async (apiKey) => {
+      const nextAuth = await api.login(apiKey);
+      setAuth(nextAuth);
+      await bootstrap();
+    }} />;
+  }
+
+  if (!health && !fatalError) {
+    return <div className="boot-screen"><div className="boot-mark"><Icon name="activity" /></div><span>正在加载模型与运行目录</span><i /></div>;
   }
 
   return (
@@ -238,6 +268,7 @@ export default function App() {
             <span className={`connection ${health?.status === "ready" ? "ready" : ""}`}><i />{health?.status === "ready" ? "服务就绪" : "服务离线"}</span>
             <span className="model-chip"><Icon name="spark" />{health?.model.base_model.split("/").pop()}</span>
             <span className="queue-chip">{health?.active_sessions ?? 0}/{health?.max_concurrent_sessions ?? 2} 个活跃会话</span>
+            {auth?.enabled && <button className="logout-button" onClick={() => void api.logout().then((nextAuth) => { setAuth(nextAuth); setHealth(null); })}>退出</button>}
           </div>
         </header>
 
@@ -249,6 +280,7 @@ export default function App() {
             failures={failures}
             wandb={wandb}
             wandbHistory={wandbHistory}
+            replay={replay}
             loading={operationsLoading}
             onRefresh={() => void loadOperations()}
             onFailureFilter={(failureType) => {
@@ -265,6 +297,10 @@ export default function App() {
                 .then(setWandbHistory)
                 .catch((error: unknown) => setFatalError(error instanceof Error ? error.message : String(error)))
                 .finally(() => setOperationsLoading(false));
+            }}
+            onReview={async (candidateId, decision, reviewer, reason) => {
+              await api.reviewReplayCandidate(candidateId, decision, reviewer, reason);
+              setReplay(await api.replayCandidates());
             }}
           />
         ) : scenario ? (

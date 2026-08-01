@@ -1,18 +1,23 @@
 import type {
+  AuthStatus,
   DatabaseSummary,
   ExperimentList,
   FailureList,
   Health,
   OperationsSummary,
+  ReplayCandidate,
+  ReplayCandidateList,
   RunOptions,
   Scenario,
   Session,
+  SessionStatus,
   SessionList,
   Trajectory,
   TrajectoryEvent,
   WandbRunList,
   WandbRunHistory,
 } from "./types";
+import { terminalStatuses } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -47,6 +52,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authStatus: () => request<AuthStatus>("/auth/status"),
+  login: (apiKey: string) => request<AuthStatus>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ api_key: apiKey }),
+  }),
+  logout: () => request<AuthStatus>("/auth/logout", { method: "POST" }),
   health: () => request<Health>("/health"),
   scenarios: () => request<Scenario[]>("/api/scenarios"),
   databases: () => request<DatabaseSummary[]>("/api/databases"),
@@ -54,6 +65,19 @@ export const api = {
   operations: () => request<OperationsSummary>("/api/observability/summary"),
   failures: (failureType = "") => request<FailureList>(
     `/api/observability/failures?limit=100${failureType ? `&failure_type=${encodeURIComponent(failureType)}` : ""}`,
+  ),
+  replayCandidates: () => request<ReplayCandidateList>("/api/replay/candidates"),
+  reviewReplayCandidate: (
+    candidateId: string,
+    decision: "approve" | "reject",
+    reviewer: string,
+    reason: string,
+  ) => request<ReplayCandidate>(
+    `/api/replay/candidates/${encodeURIComponent(candidateId)}/reviews`,
+    {
+      method: "POST",
+      body: JSON.stringify({ decision, reviewer, reason }),
+    },
   ),
   wandbRuns: () => request<WandbRunList>("/api/observability/wandb/runs"),
   wandbHistory: (runId: string) => request<WandbRunHistory>(
@@ -101,13 +125,20 @@ export function subscribeToEvents(
     "tool",
     "reward",
     "budget",
-    "error",
+    "agent_error",
     "cancelled",
   ];
   for (const type of eventTypes) {
     source.addEventListener(type, (raw) => {
       const message = raw as MessageEvent<string>;
-      onEvent(JSON.parse(message.data) as TrajectoryEvent);
+      const event = JSON.parse(message.data) as TrajectoryEvent;
+      onEvent(event);
+      if (
+        event.event_type === "status"
+        && terminalStatuses.has(String(event.payload.status) as SessionStatus)
+      ) {
+        source.close();
+      }
     });
   }
   source.onerror = onError;

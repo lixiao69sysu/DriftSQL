@@ -147,10 +147,19 @@ def build_rl_record(
 ) -> dict[str, Any]:
     source_db = Path(str(manifest["source_db"])).resolve()
     schema = relevant_schema_ddl(source_db, str(manifest["stale_sql"]))
+    metric_version = next(
+        (
+            str(operation.get("to_version"))
+            for operation in reversed(manifest["schema_diff"].get("operations", []))
+            if operation.get("type") == "metric_definition_change"
+            and operation.get("to_version")
+        ),
+        "v1",
+    )
     create_kwargs = {
         "db_id": str(manifest["db_id"]),
         "db_version": "v2",
-        "metric_version": "v1",
+        "metric_version": metric_version,
         "source_db": str(source_db),
         "schema_diff": manifest["schema_diff"],
         "query": str(manifest["question"]),
@@ -187,7 +196,7 @@ def build_rl_record(
             "source_index": int(manifest["source_index"]),
             "db_id": str(manifest["db_id"]),
             "db_version": "v2",
-            "metric_version": "v1",
+            "metric_version": metric_version,
             "source_db": str(source_db),
             "schema": schema,
             "stale_sql": str(manifest["stale_sql"]),

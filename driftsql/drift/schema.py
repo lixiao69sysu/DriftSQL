@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from typing import Any
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -24,7 +25,7 @@ class SchemaDiff:
     db_id: str
     from_version: str
     to_version: str
-    operations: tuple[dict[str, str], ...]
+    operations: tuple[dict[str, Any], ...]
 
     def to_observation(self) -> dict[str, object]:
         return {

@@ -16,11 +16,16 @@ def test_openapi_describes_all_product_interfaces(tmp_path: Path) -> None:
     schema = app.openapi()
     expected_paths = {
         "/health",
+        "/auth/status",
+        "/auth/login",
+        "/auth/logout",
         "/api/models",
         "/api/observability/failures",
         "/api/observability/summary",
         "/api/observability/wandb/runs",
         "/api/observability/wandb/runs/{run_id}/history",
+        "/api/replay/candidates",
+        "/api/replay/candidates/{candidate_id}/reviews",
         "/api/scenarios",
         "/api/databases",
         "/api/experiments",
@@ -35,8 +40,12 @@ def test_openapi_describes_all_product_interfaces(tmp_path: Path) -> None:
     components = schema["components"]["schemas"]
     for contract in (
         "ExperimentList",
+        "AuthLogin",
+        "AuthStatus",
         "FailureList",
         "OperationsSummary",
+        "ReplayCandidateList",
+        "ReplayReviewCreate",
         "SessionCreate",
         "SessionRead",
         "TrajectoryEvent",

@@ -57,6 +57,12 @@ export interface Health {
   details: Record<string, unknown>;
 }
 
+export interface AuthStatus {
+  enabled: boolean;
+  authenticated: boolean;
+  expires_at: string | null;
+}
+
 export interface Scenario {
   scenario_id: string;
   db_id: string;
@@ -164,6 +170,40 @@ export interface Failure {
 
 export interface FailureList {
   failures: Failure[];
+  total: number;
+  counts: Record<string, number>;
+}
+
+export type ReplayReviewStatus = "pending" | "approve" | "reject";
+
+export interface ReplayCandidate {
+  candidate_id: string;
+  session_id: string;
+  scenario_id: string;
+  db_id: string;
+  drift_type: string;
+  wildcard_profile: string | null;
+  added_column_count: number | null;
+  failure_type: string;
+  failure_class: string;
+  session_status: string;
+  termination_reason: string | null;
+  success: boolean | null;
+  model_calls: number;
+  tool_calls: number;
+  tool_sequence: string[];
+  final_sql: string | null;
+  reward_score: number | null;
+  trajectory_sha256: string;
+  review_status: ReplayReviewStatus;
+  reviewer: string | null;
+  review_reason: string | null;
+  reviewed_at: string | null;
+}
+
+export interface ReplayCandidateList {
+  available: boolean;
+  candidates: ReplayCandidate[];
   total: number;
   counts: Record<string, number>;
 }

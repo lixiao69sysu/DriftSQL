@@ -1,6 +1,6 @@
 # DriftSQL-RL
 
-Failure-driven Agentic Reinforcement Learning for enterprise analytics under
+Failure-driven Agentic Reinforcement Learning for SQL enterprise analytics under
 schema and metric drift.
 
 ## Project boundary

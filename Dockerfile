@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+ARG VLLM_IMAGE=vllm/vllm-openai:v0.15.1
+
 FROM node:20-bookworm-slim AS frontend-build
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -7,7 +9,6 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-ARG VLLM_IMAGE=vllm/vllm-openai:v0.15.1
 FROM ${VLLM_IMAGE} AS runtime
 ENTRYPOINT []
 WORKDIR /app

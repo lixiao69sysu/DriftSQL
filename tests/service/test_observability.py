@@ -78,3 +78,39 @@ def test_wandb_catalog_whitelists_numeric_training_metrics(monkeypatch) -> None:
     assert [series.name for series in history.series] == ["actor/kl", "reward/mean"]
     assert [point.value for point in history.series[1].points] == [0.2, 0.8]
     assert captured["run_path"] == "example/driftsql-rl/run-1"
+
+
+def test_wandb_catalog_surfaces_newest_runs_first(monkeypatch) -> None:
+    def run(run_id: str, created_at: str):
+        return SimpleNamespace(
+            id=run_id,
+            name=run_id,
+            state="finished",
+            url=f"https://wandb.ai/example/driftsql-rl/runs/{run_id}",
+            created_at=created_at,
+            summary=SimpleNamespace(_json_dict={"train/loss": 0.1}),
+        )
+
+    class FakeApi:
+        def __init__(self, *, timeout, api_key) -> None:
+            del timeout, api_key
+
+        def runs(self, path: str, *, per_page: int):
+            del path, per_page
+            return [
+                run("old-connectivity-test", "2026-07-30T10:00:00Z"),
+                run("new-stage8-grpo", "2026-07-30T22:00:00Z"),
+            ]
+
+    monkeypatch.setitem(sys.modules, "wandb", SimpleNamespace(Api=FakeApi))
+    settings = ServiceSettings(
+        environment="test",
+        model_backend="scripted",
+        wandb_enabled=True,
+        wandb_entity="example",
+        wandb_project="driftsql-rl",
+    )
+
+    result = WandbService(settings).list_runs()
+
+    assert [item.run_id for item in result.runs] == ["new-stage8-grpo", "old-connectivity-test"]

@@ -1,0 +1,119 @@
+{
+  "protocol": "driftsql_p4_real_acceptance_v1",
+  "verified_at": "2026-08-01T04:56:42.449051+00:00",
+  "base_url": "http://127.0.0.1:8001",
+  "passed": true,
+  "checks": {
+    "real_vllm_backend_loaded": true,
+    "frozen_sft20_adapter_loaded": true,
+    "wandb_online_and_target_run_visible": true,
+    "wandb_reward_and_kl_curves_loaded": true,
+    "real_add_column_session_terminal": true,
+    "isolated_read_only_sandbox_used": true,
+    "model_and_tool_trajectory_persisted": true,
+    "trajectory_replay_is_byte_stable": true,
+    "operations_include_acceptance_session": true
+  },
+  "failed": [],
+  "evidence": {
+    "service": {
+      "status": "ready",
+      "backend": "vllm",
+      "model_loaded": true,
+      "adapter_sha256": "a3a35f51c2b8c42462f80488d47dd5261e7fba801b6d893a73c609d019a62fd1",
+      "frozen_candidate_sha256": "f01705eff226e072fc9093bc1a4fd95850cf8e1ce7726f316cfc105be865110f",
+      "sandbox": "isolated-sqlite",
+      "sql_policy": "read-only"
+    },
+    "wandb": {
+      "entity": "lixiao69-",
+      "project": "driftsql-rl",
+      "run_id": "i57aenm4",
+      "metric_names": [
+        "actor/kl_coef",
+        "actor/kl_loss",
+        "actor/loss",
+        "actor/lr",
+        "actor/pg_loss",
+        "actor/ppo_kl",
+        "critic/rewards/max",
+        "critic/rewards/mean",
+        "critic/rewards/min",
+        "perf/throughput"
+      ],
+      "series_points": {
+        "actor/kl_coef": 10,
+        "actor/kl_loss": 10,
+        "actor/loss": 10,
+        "actor/lr": 10,
+        "actor/pg_loss": 10,
+        "actor/ppo_kl": 10,
+        "critic/rewards/max": 10,
+        "critic/rewards/mean": 10,
+        "critic/rewards/min": 10,
+        "perf/throughput": 10
+      }
+    },
+    "session": {
+      "session_id": "2ecf7ba6-0cf9-4fa4-9ddb-762a0d7590a7",
+      "scenario_id": "drift_coladd_336a8e6d4010d75e",
+      "db_id": "public_review_platform",
+      "drift_type": "add_column",
+      "status": "completed",
+      "termination_reason": "submitted",
+      "success": true,
+      "model_calls": 5,
+      "tool_calls": 5,
+      "elapsed_ms": 14114.42118883133,
+      "sandbox_ref": "sandbox:2ecf7ba6-0cf9-4fa4-9ddb-762a0d7590a7",
+      "source_db_sha256": "d87fa4bbcb2d5daec149330d5c47378b2c669222e616bfe2c04cc3624e7ad4ba",
+      "final_sql": "SELECT src.\"day_id\", src.\"day_of_week\" FROM \"Days\" AS src ORDER BY src.rowid LIMIT 20"
+    },
+    "trajectory": {
+      "event_count": 15,
+      "event_counts": {
+        "session": 1,
+        "queued": 1,
+        "status": 2,
+        "model": 5,
+        "tool": 5,
+        "reward": 1
+      },
+      "tool_trace": [
+        {
+          "tool": "execute_sql",
+          "success": true,
+          "action_masked": false
+        },
+        {
+          "tool": "get_schema_version",
+          "success": true,
+          "action_masked": false
+        },
+        {
+          "tool": "inspect_schema_diff",
+          "success": true,
+          "action_masked": false
+        },
+        {
+          "tool": "execute_sql",
+          "success": true,
+          "action_masked": false
+        },
+        {
+          "tool": "submit_solution",
+          "success": true,
+          "action_masked": false
+        }
+      ],
+      "sha256": "25edca3ff046010e69bd2bde25e648484f7630869d401cd5ddf912a959ea12f2",
+      "replay_sha256": "25edca3ff046010e69bd2bde25e648484f7630869d401cd5ddf912a959ea12f2"
+    },
+    "operations": {
+      "total_sessions": 6,
+      "terminal_sessions": 6,
+      "success_rate": 0.5,
+      "classified_failures": 3
+    }
+  }
+}

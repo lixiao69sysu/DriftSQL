@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import mimetypes
+from hmac import compare_digest
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from driftsql.service.api import router
 from driftsql.service.catalog import ExperimentCatalog, ScenarioCatalog
@@ -81,6 +82,26 @@ def create_app(
         ),
         lifespan=lifespan,
     )
+
+    @application.middleware("http")
+    async def authenticate_api(request: Request, call_next):
+        if not resolved_settings.auth_enabled or not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        expected = resolved_settings.api_key.get_secret_value() if resolved_settings.api_key else ""
+        bearer = request.headers.get("authorization", "")
+        supplied = (
+            bearer.removeprefix("Bearer ").strip()
+            if bearer.startswith("Bearer ")
+            else request.headers.get("x-driftsql-api-key", "").strip()
+        )
+        if not supplied or not compare_digest(supplied, expected):
+            return JSONResponse(
+                {"detail": "Invalid or missing DriftSQL API key"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return await call_next(request)
+
     application.include_router(router)
     if resolved_settings.serve_frontend:
         assets = (resolved_settings.frontend_dist_path / "assets").resolve()

@@ -32,11 +32,10 @@ tmp/
 *.sqlite3
 *.db
 
-# Keep compact experiment summaries explicitly selected for release, but skip
-# high-volume per-episode trajectories and stream logs by default.
-reports/**/episodes/
-reports/**/*.jsonl
-reports/**/*.log
+# Experiment reports may contain high-volume trajectories, local paths, or
+# unreleased Gate metrics. Keep them local and force-add only reviewed,
+# compact acceptance evidence intended for a release.
+reports/
 
 # Framework source is reproducibly pinned in frameworks.lock.
 third_party/

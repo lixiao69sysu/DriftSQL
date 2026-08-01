@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { compactHash, formatDate, formatDuration } from "../utils";
 import { zhLabel } from "../locale";
+import { selectMetricSeries } from "../metrics";
 import type { FailureList, OperationsSummary, WandbMetricSeries, WandbRunHistory, WandbRunList } from "../types";
 import { Icon } from "./Icon";
 import { StatusBadge } from "./StatusBadge";
@@ -176,7 +177,7 @@ export function OperationsDashboard({
               ) : (
                 <div className="wandb-runs">
                   {wandbHistory?.status === "ready" && wandbHistory.series.length > 0 && (
-                    <div className="metric-chart-grid">{wandbHistory.series.slice(0, 4).map((series) => <MetricChart series={series} key={series.name} />)}</div>
+                    <div className="metric-chart-grid">{selectMetricSeries(wandbHistory.series).map((series) => <MetricChart series={series} key={series.name} />)}</div>
                   )}
                   {wandbHistory?.status === "ready" && wandbHistory.series.length === 0 && <div className="ops-empty">该 Run 没有可用的 reward、KL、loss 或学习率历史。</div>}
                   {wandb.runs.slice(0, 6).map((run) => <button className={wandbHistory?.run_id === run.run_id ? "active" : ""} onClick={() => onWandbRun(run.run_id)} key={run.run_id}><span><b>{run.name}</b><small>{run.state} · {formatDate(run.created_at)}</small></span><em>{Object.keys(run.summary_metrics).length} 项指标</em></button>)}

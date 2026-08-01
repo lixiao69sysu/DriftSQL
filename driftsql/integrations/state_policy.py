@@ -48,6 +48,17 @@ def schema_diff_recovery_guidance(schema_diff: dict[str, Any]) -> list[str]:
                 f"Replace column identifier '{old_name}' with audited column '{new_name}' "
                 f"on {table}; preserve aliases, predicates, grouping, and output intent."
             )
+        elif drift_type == "metric_definition_change":
+            metric_name = str(operation.get("metric_name") or "the requested metric")
+            old_expression = str(operation.get("old_expression") or "")
+            new_expression = str(operation.get("new_expression") or "")
+            reason = str(operation.get("reason") or "the active business definition changed")
+            clarification = bool(operation.get("requires_clarification"))
+            guidance.append(
+                f"Metric '{metric_name}' changed from '{old_expression}' to '{new_expression}' "
+                f"because {reason}. Use the active definition"
+                + (" after confirming the requested metric version with the user." if clarification else ".")
+            )
     return guidance
 
 

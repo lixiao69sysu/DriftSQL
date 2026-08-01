@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "accept:p4:record": "node scripts/record-p4-acceptance.mjs",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -19,6 +20,7 @@
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
     "jsdom": "29.0.1",
+    "playwright": "^1.62.1",
     "typescript": "7.0.2",
     "vite": "8.2.0",
     "vitest": "4.1.10"

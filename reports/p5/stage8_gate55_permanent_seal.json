@@ -1,0 +1,13 @@
+{
+  "protocol": "driftsql_stage8_gate55_permanent_seal_v1",
+  "created_for": "P5 unseen-database add-column/turn-limit development",
+  "policy": "Hash evidence only. P5 must never parse Gate55 rows, tune from Gate55 metrics, mine Gate55 failures, or include Gate55 tasks in replay.",
+  "files_sha256": {
+    "reports/stage8/final_candidate/frozen_candidate.json": "f01705eff226e072fc9093bc1a4fd95850cf8e1ce7726f316cfc105be865110f",
+    "reports/stage8/final_candidate/gate55_result.json": "03e8675133163daab54e7313f4bc03700aae9857a6aef45d76830c1efb690a87",
+    "data/processed/stage8_gate_eval/summary.json": "90153000f80ee928d88a034325b8cf421910708837551e05f55a8e129ec1a413",
+    "data/processed/stage8_gate_eval/gate55_agent_eval.jsonl": "cd580c394e9c2ab6da200836105068b13f5679e3a0f07037cadaa0b8e27069b6"
+  },
+  "gate55_rows_read": false,
+  "p5_database_overlap": []
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +23,8 @@ class ServiceSettings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    auth_enabled: bool = False
+    api_key: SecretStr | None = None
 
     model_backend: Literal["vllm", "scripted"] = "vllm"
     base_model_path: Path = PROJECT_ROOT / "models/Qwen2.5-Coder-7B-Instruct"
@@ -58,6 +60,14 @@ class ServiceSettings(BaseSettings):
     wandb_api_key: SecretStr | None = Field(default=None, validation_alias="WANDB_API_KEY")
     wandb_timeout_seconds: int = Field(default=10, ge=1, le=60)
     wandb_max_runs: int = Field(default=20, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def require_api_key_when_auth_is_enabled(self) -> "ServiceSettings":
+        if self.auth_enabled and (
+            self.api_key is None or not self.api_key.get_secret_value().strip()
+        ):
+            raise ValueError("DRIFTSQL_SERVICE_API_KEY is required when authentication is enabled")
+        return self
 
     def ensure_directories(self) -> None:
         self.repository_path.parent.mkdir(parents=True, exist_ok=True)

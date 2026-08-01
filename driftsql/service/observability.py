@@ -220,6 +220,14 @@ class WandbService:
                         summary_metrics=metrics,
                     )
                 )
+            # W&B may return runs in creation order.  The Studio has limited
+            # vertical space, so always surface the newest experiments first;
+            # otherwise old connectivity tests and failed retries can hide the
+            # selected SFT/GRPO curves.
+            output.sort(
+                key=lambda item: item.created_at or datetime.min.replace(tzinfo=UTC),
+                reverse=True,
+            )
             return WandbRunList(
                 configured=True,
                 status="ready",

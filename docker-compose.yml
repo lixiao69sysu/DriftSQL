@@ -1,0 +1,30 @@
+services:
+  studio:
+    build:
+      context: .
+      args:
+        VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:v0.15.1}
+    image: driftsql-studio:local
+    restart: unless-stopped
+    ipc: host
+    gpus: all
+    ports:
+      - "${DRIFTSQL_PORT:-8001}:8000"
+    environment:
+      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0,2}
+      DRIFTSQL_SERVICE_TENSOR_PARALLEL_SIZE: ${DRIFTSQL_TP:-2}
+      DRIFTSQL_SERVICE_AUTH_ENABLED: ${DRIFTSQL_AUTH_ENABLED:-false}
+      DRIFTSQL_SERVICE_API_KEY: ${DRIFTSQL_SERVICE_API_KEY:-}
+      DRIFTSQL_SERVICE_WANDB_ENABLED: ${DRIFTSQL_WANDB_ENABLED:-false}
+      DRIFTSQL_SERVICE_WANDB_ENTITY: ${DRIFTSQL_WANDB_ENTITY:-}
+      DRIFTSQL_SERVICE_WANDB_PROJECT: ${DRIFTSQL_WANDB_PROJECT:-driftsql-rl}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+    volumes:
+      - ./models:/app/models:ro
+      - ./checkpoints:/app/checkpoints:ro
+      - ./reports:/app/reports:ro
+      - ./data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

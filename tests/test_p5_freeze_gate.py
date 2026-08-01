@@ -5,6 +5,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from scripts.eval_p5_frozen_gate import complete_evaluation, start_or_resume_evaluation
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -127,3 +131,61 @@ def test_p5_gate_open_attempt_is_fail_closed_and_cannot_repeat(tmp_path: Path) -
     second = subprocess.run(gate_command, cwd=ROOT, capture_output=True, text=True)
     assert second.returncode != 0
     assert "already been opened or attempted" in second.stderr
+
+
+def test_p5_gate_eval_is_one_logical_run_with_explicit_resume(tmp_path: Path) -> None:
+    state_path = tmp_path / "gate_eval_state.json"
+    lifecycle_path = tmp_path / "gate_lifecycle.jsonl"
+    output_dir = tmp_path / "result"
+    identity = {
+        "candidate_freeze_sha256": "a" * 64,
+        "gate_input_summary_sha256": "b" * 64,
+        "gate_eval_input_sha256": "c" * 64,
+        "candidate": "p5-grpo-step10",
+        "inference": {"max_turns": 7},
+        "gpus": "0,2,3",
+    }
+
+    started = start_or_resume_evaluation(
+        state_path=state_path,
+        lifecycle_path=lifecycle_path,
+        identity=identity,
+        resume=False,
+    )
+    assert started["status"] == "started"
+    assert started["attempts"] == 1
+    with pytest.raises(RuntimeError, match="only --resume"):
+        start_or_resume_evaluation(
+            state_path=state_path,
+            lifecycle_path=lifecycle_path,
+            identity=identity,
+            resume=False,
+        )
+
+    resumed = start_or_resume_evaluation(
+        state_path=state_path,
+        lifecycle_path=lifecycle_path,
+        identity=identity,
+        resume=True,
+    )
+    assert resumed["attempts"] == 2
+    output_dir.mkdir()
+    write_json(output_dir / "summary.json", {"result": {"tasks": 18}})
+    write_jsonl(output_dir / "p5-frozen-gate.jsonl", [{"instance_id": "fixture"}])
+    completed = complete_evaluation(
+        state_path=state_path,
+        lifecycle_path=lifecycle_path,
+        output_dir=output_dir,
+    )
+    assert completed["status"] == "completed"
+    with pytest.raises(RuntimeError, match="already completed"):
+        start_or_resume_evaluation(
+            state_path=state_path,
+            lifecycle_path=lifecycle_path,
+            identity=identity,
+            resume=True,
+        )
+    lifecycle = lifecycle_path.read_text(encoding="utf-8")
+    assert "gate_eval_started" in lifecycle
+    assert "gate_eval_resumed" in lifecycle
+    assert "gate_eval_completed" in lifecycle

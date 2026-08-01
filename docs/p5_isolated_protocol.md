@@ -79,3 +79,9 @@ can be opened. The first Gate-open attempt creates an exclusive lifecycle file
 before reading any row, so even a failed attempt cannot be repeated as a new
 selection opportunity. Finalization records the one-shot result and permanent
 seal; it never feeds failures back into training.
+
+The evaluator also persists a one-shot run state. A fresh second invocation is
+rejected. If the same frozen run is interrupted, it may only continue with
+`eval_p5_frozen_gate.py --resume`; candidate, Gate input and inference budget
+must remain byte-identical. After completion even `--resume` is rejected, and
+finalization refuses result files whose hashes differ from that run state.

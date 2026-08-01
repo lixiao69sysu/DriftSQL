@@ -58,10 +58,25 @@ def main() -> None:
         if sha256(ROOT / relative) != expected:
             raise RuntimeError(f"Frozen P5 input changed before Gate finalization: {relative}")
     gate_input = json.loads((args.gate_dir / "summary.json").read_text(encoding="utf-8"))
+    eval_state_path = args.freeze.parent / "gate_eval_state.json"
+    eval_state = json.loads(eval_state_path.read_text(encoding="utf-8"))
+    if eval_state.get("protocol") != "driftsql_p5_one_shot_eval_state_v1":
+        raise RuntimeError("Invalid P5 Gate evaluation state")
+    if eval_state.get("status") != "completed":
+        raise RuntimeError("P5 Gate evaluation is not completed")
+    if eval_state.get("candidate_freeze_sha256") != sha256(args.freeze):
+        raise RuntimeError("P5 Gate evaluation used a different candidate freeze")
+    if eval_state.get("gate_input_summary_sha256") != sha256(args.gate_dir / "summary.json"):
+        raise RuntimeError("P5 Gate evaluation input changed")
     rows_path = args.report_dir / "p5-frozen-gate.jsonl"
     summary_path = args.report_dir / "summary.json"
     rows = load_jsonl(rows_path)
     evaluator_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    expected_results = eval_state.get("result_files_sha256", {})
+    if expected_results.get(summary_path.name) != sha256(summary_path):
+        raise RuntimeError("P5 Gate evaluator summary changed after the one-shot run")
+    if expected_results.get(rows_path.name) != sha256(rows_path):
+        raise RuntimeError("P5 Gate evaluator rows changed after the one-shot run")
     metadata = load_jsonl(args.gate_dir / "gate_agent_eval.jsonl")
     hard_ids = {str(row["extra_info"]["instance_id"]) for row in metadata if row["extra_info"]["p5_turn_limit_focus"]}
     ids = [str(row["instance_id"]) for row in rows]
@@ -100,6 +115,7 @@ def main() -> None:
             str(path.resolve().relative_to(ROOT)): sha256(path)
             for path in [
                 args.freeze,
+                eval_state_path,
                 args.gate_dir / "summary.json",
                 args.gate_dir / "gate_agent_eval.jsonl",
                 summary_path,

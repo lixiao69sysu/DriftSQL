@@ -367,3 +367,9 @@ the distinction between training-rollout reward and held-out evaluation.
     daily trends, failure classification and trajectory replay, deployment
     provenance, and optional server-side W&B run discovery. See
     `docs/product_service_p4.md`.
+14. **P5 completed as a negative promotion result:** human-reviewed replay,
+    database-isolated Train/Tune/Gate, 10-step 7B GRPO, deterministic Tune
+    selection, and the permanently sealed one-shot Gate all ran. GRPO did not
+    beat SFT20, and the frozen SFT20 candidate failed the precommitted Gate;
+    no Gate result is reused for tuning. See
+    `docs/experiments/p5_reviewed_replay_20260801.md`.

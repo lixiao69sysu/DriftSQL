@@ -1,0 +1,23 @@
+model:
+  path: ${oc.env:DRIFTSQL_MODEL_PATH,models/Qwen2.5-Coder-7B-Instruct}
+  max_prompt_length: 8192
+  max_response_length: 4096
+  lora_rank: 32
+  lora_alpha: 32
+
+algorithm:
+  adv_estimator: grpo
+  rollout_samples: 4
+  use_kl_in_reward: false
+
+agent:
+  max_turns: 6
+  max_tool_cost: 12.0
+  read_only_serving: true
+
+trainer:
+  learning_rate: 1.0e-6
+  total_epochs: 2
+  val_before_train: true
+  save_freq: 100
+  test_freq: 50

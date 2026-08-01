@@ -1,0 +1,39 @@
+sources:
+  bird23_train_filtered:
+    role: clean_text_to_sql_and_drift_seed
+    task_file: data/raw/bird23-train-filtered/data/train-00000-of-00001.jsonl
+    database_root: data/raw/bird23-train-filtered/full/train/train_databases
+    rows: 6601
+    split: train
+
+  six_gym_sqlite:
+    role: debugging_sft_rl_and_failure_replay
+    task_file: data/raw/six-gym-sqlite/train.jsonl
+    database_root: data/raw/six-gym-sqlite/database
+    rows: 5000
+    split: train
+
+  bird_critic_sqlite:
+    role: official_bird_rl_baseline_database_assets
+    task_file: data/raw/bird-critic-sqlite/sqlite-00000-of-00001.jsonl
+    database_root: data/raw/bird-critic-sqlite/database
+    rows: 500
+    split: protected_test
+
+  bird_mini_dev:
+    role: clean_and_generated_drift_evaluation
+    task_file: data/raw/bird-mini-dev/data/mini_dev_sqlite-00000-of-00001.json
+    database_root: data/raw/bird-mini-dev/full/dev_20240627/dev_databases
+    rows: 500
+    split: test
+
+  mini_interact:
+    role: optional_qualitative_interaction_demo
+    task_file: data/raw/mini-interact/mini_interact.jsonl
+    database_root: data/raw/mini-interact
+    rows: 300
+    split: demo
+
+split_policy:
+  unit: db_id
+  require_zero_train_eval_overlap: true

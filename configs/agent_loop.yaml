@@ -1,0 +1,2 @@
+- name: driftsql_tool_agent
+  _target_: driftsql.integrations.agent_loop.DriftToolAgentLoop

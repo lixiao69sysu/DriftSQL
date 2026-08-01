@@ -1,0 +1,20 @@
+{
+  "base_model": {
+    "repo_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
+    "local_dir": "models/Qwen2.5-Coder-7B-Instruct",
+    "expected_size_bytes": 15242807397
+  },
+  "smoke_model_3b": {
+    "repo_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
+    "revision": "488639f1ff808d1d3d0ba301aef8c11461451ec5",
+    "local_dir": "models/Qwen2.5-Coder-3B-Instruct",
+    "expected_size_bytes": 6183465285
+  },
+  "bird_zeno_7b": {
+    "repo_id": "birdsql/BIRD-Zeno-7b",
+    "revision": "d809e5b74b0e1d7028579f987ff6f2bbba4f7dba",
+    "local_dir": "models/BIRD-Zeno-7b",
+    "expected_size_bytes": 15247181742
+  }
+}

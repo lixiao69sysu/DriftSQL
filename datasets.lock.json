@@ -1,0 +1,45 @@
+{
+  "bird23_train_filtered": {
+    "repo_id": "birdsql/bird23-train-filtered",
+    "repo_type": "dataset",
+    "revision": "4068469807b255fcfc0816bdd520946fe460d256",
+    "local_dir": "data/raw/bird23-train-filtered",
+    "task_file": "data/train-00000-of-00001.jsonl",
+    "database_archive_url": "https://bird-bench.oss-cn-beijing.aliyuncs.com/train.zip",
+    "database_archive_size_bytes": 8919543554,
+    "nested_archive_size_bytes": 9347158408,
+    "expected_database_count": 69
+  },
+  "six_gym_sqlite": {
+    "repo_id": "birdsql/six-gym-sqlite",
+    "repo_type": "dataset",
+    "revision": "d603cc8af5294bb75415b8137d362080dab01bfd",
+    "local_dir": "data/raw/six-gym-sqlite",
+    "task_file": "train.jsonl"
+  },
+  "bird_critic_sqlite": {
+    "repo_id": "birdsql/bird-critic-1.0-sqlite",
+    "repo_type": "dataset",
+    "revision": "af2b1c3e2f8b3480e5569212198761c770df06d0",
+    "local_dir": "data/raw/bird-critic-sqlite",
+    "task_file": "sqlite-00000-of-00001.jsonl"
+  },
+  "bird_mini_dev": {
+    "repo_id": "birdsql/bird_mini_dev",
+    "repo_type": "dataset",
+    "revision": "f65faf4ae3b638c1fa6df1d3370c8d92c8366301",
+    "local_dir": "data/raw/bird-mini-dev",
+    "task_file": "data/mini_dev_sqlite-00000-of-00001.json",
+    "database_archive_url": "https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip",
+    "database_archive_size_bytes": 346207293,
+    "nested_archive_size_bytes": 345997266,
+    "expected_database_count": 11
+  },
+  "mini_interact": {
+    "repo_id": "birdsql/mini-interact",
+    "repo_type": "dataset",
+    "revision": "10253f235dbc6092a97e9c0acd30dba6203d8e59",
+    "local_dir": "data/raw/mini-interact",
+    "task_file": "mini_interact.jsonl"
+  }
+}

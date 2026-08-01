@@ -1,0 +1,47 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+node_modules/
+*.tsbuildinfo
+
+# Local data, databases, trajectories, and checkpoints.
+artifacts/
+data/raw/
+data/processed/
+data/generated/
+data/evaluation/
+data/service/
+data/tmp/
+checkpoints/
+models/
+outputs/
+wandb/
+mlruns/
+logs/
+tmp/
+*.sqlite
+*.sqlite3
+*.db
+
+# Keep compact experiment summaries explicitly selected for release, but skip
+# high-volume per-episode trajectories and stream logs by default.
+reports/**/episodes/
+reports/**/*.jsonl
+reports/**/*.log
+
+# Framework source is reproducibly pinned in frameworks.lock.
+third_party/
+
+# Local credentials and machine-specific settings.
+.env
+.env.*
+!.env.example

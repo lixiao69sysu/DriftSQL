@@ -1,0 +1,15 @@
+# Upstream source revisions used by DriftSQL-RL.
+# Update intentionally and rerun all clean/drift regression tests.
+
+BIRD_RL_URL=https://github.com/bird-bench/BIRD-RL.git
+BIRD_RL_COMMIT=b26c4285ef69dfb6c096b076a7499018c6b370ca
+
+BIRD_INTERACT_URL=https://github.com/bird-bench/BIRD-Interact.git
+BIRD_INTERACT_COMMIT=451fe2c3518ee1cf908d8139e2913483bd519381
+
+VERL_URL=https://github.com/volcengine/verl.git
+VERL_COMMIT=983cb0f24443f87b3d161fad318445130a620b07
+
+# Reference benchmark and taxonomy; not used as the runtime environment.
+EVOSCHEMA_URL=https://github.com/zhangtianshu/EvoSchema.git
+EVOSCHEMA_COMMIT=8a99859c512913a621c94704f6561f8c14b00263

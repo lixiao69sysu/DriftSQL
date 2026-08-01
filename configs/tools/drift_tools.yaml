@@ -1,0 +1,112 @@
+tools:
+  - class_name: "driftsql.integrations.verl_tools.AskUserTool"
+    config:
+      type: native
+      max_questions: 3
+    tool_schema:
+      type: function
+      function:
+        name: ask_user
+        description: Ask one focused question to clarify an ambiguous business term. The user answers only documented ambiguity points.
+        parameters:
+          type: object
+          properties:
+            question:
+              type: string
+              description: One concrete clarification question about the user's request.
+          required: ["question"]
+
+  - class_name: "driftsql.integrations.verl_tools.GetSchemaTool"
+    config:
+      type: native
+      max_chars: 12000
+    tool_schema:
+      type: function
+      function:
+        name: get_schema
+        description: Retrieve the active database schema, optionally ranked by relevant table or column terms.
+        parameters:
+          type: object
+          properties:
+            query:
+              type: string
+              description: Optional table, column, or concept search query.
+          required: []
+
+  - class_name: "driftsql.integrations.verl_tools.GetKnowledgeDefinitionTool"
+    config:
+      type: native
+      max_results: 3
+    tool_schema:
+      type: function
+      function:
+        name: get_knowledge_definition
+        description: Retrieve definitions and formulas from the active database's business knowledge base.
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Business metric, concept, or knowledge name to retrieve.
+          required: ["name"]
+
+  - class_name: "driftsql.integrations.verl_tools.GetSchemaVersionTool"
+    config:
+      type: native
+    tool_schema:
+      type: function
+      function:
+        name: get_schema_version
+        description: Return the active database schema and business-metric versions.
+        parameters:
+          type: object
+          properties: {}
+          required: []
+
+  - class_name: "driftsql.integrations.verl_tools.InspectSchemaDiffTool"
+    config:
+      type: native
+    tool_schema:
+      type: function
+      function:
+        name: inspect_schema_diff
+        description: Inspect audited schema changes and generic recovery constraints needed to preserve the cached query contract.
+        parameters:
+          type: object
+          properties: {}
+          required: []
+
+  - class_name: "driftsql.integrations.verl_tools.VersionedSqlExecutorTool"
+    config:
+      type: native
+      timeout_seconds: 30
+      max_rows: 100
+      isolate_existing_db: true
+    tool_schema:
+      type: function
+      function:
+        name: execute_sql
+        description: Execute one read-only SQL query against the active versioned database.
+        parameters:
+          type: object
+          properties:
+            sql:
+              type: string
+              description: A read-only SQL query used for exploration or validation.
+          required: ["sql"]
+
+  - class_name: "driftsql.integrations.verl_tools.SubmitSolutionTool"
+    config:
+      type: native
+    tool_schema:
+      type: function
+      function:
+        name: submit_solution
+        description: Submit the final SQL query and terminate the trajectory.
+        parameters:
+          type: object
+          properties:
+            sql:
+              type: string
+              description: The final SQL query.
+          required: ["sql"]

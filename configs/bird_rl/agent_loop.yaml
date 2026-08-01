@@ -1,0 +1,2 @@
+- name: tool_agent_with_db_cleanup
+  _target_: driftsql.integrations.bird_agent_loop.BirdJsonCompatAgentLoop

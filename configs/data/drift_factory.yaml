@@ -1,0 +1,41 @@
+source: bird23_train_filtered
+split_unit: db_id
+output_root: data/generated
+
+validation:
+  require_stale_sql_failure: true
+  require_repaired_result_equivalence: true
+  retain_materialized_databases: false
+
+mutations:
+  rename_column:
+    enabled: true
+    target_examples: 100
+    naming_strategy: semantic_token_or_contextual_prefix
+    forbid_uniform_version_suffix: true
+  rename_table:
+    enabled: true
+    target_examples: 100
+    naming_strategy: semantic_token_or_contextual_prefix
+  add_column:
+    enabled: true
+    target_examples: 100
+    mode: select_star_silent_result_schema_drift
+  remove_column:
+    enabled: true
+    target_examples: 100
+    mode: replacement_column_copy_then_drop
+  split_column:
+    enabled: false
+  merge_column:
+    enabled: false
+  add_table:
+    enabled: false
+  remove_table:
+    enabled: false
+  split_table:
+    enabled: false
+  merge_table:
+    enabled: false
+  metric_definition_change:
+    enabled: false

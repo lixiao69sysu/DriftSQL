@@ -1,0 +1,21 @@
+reward:
+  task_success: 1.0
+  clarification: 0.20
+  semantic_validation: 0.10
+  efficient_completion: 0.10
+  tool_call_cost: -0.01
+  response_token_cost: -0.00001
+  duplicate_action: -0.05
+  repeated_tool_class: -0.05
+  invalid_action: -0.05
+  timeout: -0.20
+  turn_limit_without_submit: -0.30
+  missing_or_invalid_submit: -0.20
+  unsafe_action: -1.00
+
+efficiency:
+  max_tool_calls: 6
+  max_clarifications: 1
+  max_schema_retrievals: 1
+  max_knowledge_retrievals: 1
+  max_token_penalty: 0.10

@@ -28,6 +28,7 @@ from driftsql.integrations.state_policy import (
     dynamic_mask_response,
     duplicate_retrieval_response,
     is_exact_duplicate_retrieval,
+    key_action_response_mask,
     select_dynamic_tool_names,
 )
 
@@ -101,6 +102,20 @@ class DriftToolAgentLoop(ToolAgentLoop):
             output.extra_fields["response_tokens"] = len(output.response_ids)
             output.extra_fields["trajectory_timed_out"] = False
             output.extra_fields["trajectory_turn_limit"] = trajectory_turn_limit
+            episode_mask_tokens = sum(output.response_mask)
+            key_action_mask = os.environ.get("DRIFTSQL_KEY_ACTION_MASK", "0") == "1"
+            if key_action_mask:
+                output.response_mask = key_action_response_mask(
+                    list(output.response_mask),
+                    context["events"],
+                    suffix_tokens=int(os.environ.get("DRIFTSQL_KEY_ACTION_TOKENS", "96")),
+                )
+                output.extra_fields["key_action_mask_tokens"] = sum(output.response_mask)
+            output.extra_fields["advantage_scope"] = (
+                "key_action" if key_action_mask else "episode"
+            )
+            output.extra_fields["episode_response_mask_tokens"] = episode_mask_tokens
+            output.extra_fields["advantage_mask_tokens"] = sum(output.response_mask)
             return output
         except asyncio.TimeoutError:
             context["status"] = "timeout"
@@ -116,6 +131,9 @@ class DriftToolAgentLoop(ToolAgentLoop):
                     "response_tokens": 0,
                     "trajectory_timed_out": True,
                     "trajectory_turn_limit": False,
+                    "advantage_scope": "episode",
+                    "episode_response_mask_tokens": 0,
+                    "advantage_mask_tokens": 0,
                 },
             )
             return output
@@ -183,6 +201,10 @@ class DriftToolAgentLoop(ToolAgentLoop):
             "index": len((_TRAJECTORY_CONTEXT.get() or {}).get("events", [])),
             "tool": tool_name,
             "arguments_raw": tool_call.arguments,
+            "model_token_start": max(
+                0, len(agent_data.response_mask) - len(agent_data.response_ids)
+            ),
+            "model_token_end": len(agent_data.response_mask),
         }
         try:
             context = _TRAJECTORY_CONTEXT.get()

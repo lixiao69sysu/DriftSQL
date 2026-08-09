@@ -11,8 +11,13 @@ from typing import Any
 import run_five_tool_eval as evaluator
 
 from driftsql.integrations.state_policy import (
+    should_apply_audited_repair,
+    clarification_transition_response,
     duplicate_retrieval_response,
+    dynamic_mask_response,
+    hidden_tool_bad_words,
     is_exact_duplicate_retrieval,
+    select_dynamic_tool_names,
     select_dynamic_tool_schemas,
 )
 
@@ -61,9 +66,21 @@ def main() -> None:
     parser.add_argument("--tensor-parallel-size", type=int, default=2)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.65)
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument(
+        "--episode-chunk-size",
+        type=int,
+        default=0,
+        help=(
+            "Complete and release this many episodes at a time while retaining "
+            "batched generation inside each chunk. Zero evaluates all records together."
+        ),
+    )
     parser.add_argument("--max-turns", type=int, default=7)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--max-model-len", type=int, default=8192)
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--top-p", type=float, default=1.0)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--disable-async-scheduling",
         action="store_true",
@@ -80,6 +97,11 @@ def main() -> None:
         help="Finish and release one full agent episode before starting the next.",
     )
     parser.add_argument(
+        "--resume-partial",
+        action="store_true",
+        help="Resume episode-major evaluation from its append-only partial JSONL checkpoint.",
+    )
+    parser.add_argument(
         "--disable-tool", action="append", default=[], choices=TOOL_NAMES
     )
     parser.add_argument("--terminal-submit-fallback", action="store_true")
@@ -93,7 +115,37 @@ def main() -> None:
         action="store_true",
         help="Expose retrievals once and only submit after a successful post-diff execution.",
     )
+    parser.add_argument(
+        "--constrained-tool-names",
+        action="store_true",
+        help="Ban dynamically hidden tool names during vLLM decoding.",
+    )
+    parser.add_argument(
+        "--knowledge-first-after-ask",
+        action="store_true",
+        help="Route a consumed clarification to knowledge retrieval before SQL validation.",
+    )
+    parser.add_argument(
+        "--audited-repair-controller",
+        action="store_true",
+        help=(
+            "When execute_sql exactly repeats the cached stale query after an audited diff, "
+            "replace it with the deterministic diff-derived repair candidate."
+        ),
+    )
     args = parser.parse_args()
+    if args.temperature < 0:
+        parser.error("--temperature must be non-negative")
+    if not 0 < args.top_p <= 1:
+        parser.error("--top-p must be in (0, 1]")
+    if args.constrained_tool_names and not args.dynamic_tool_mask:
+        parser.error("--constrained-tool-names requires --dynamic-tool-mask")
+    if args.knowledge_first_after_ask and not args.dynamic_tool_mask:
+        parser.error("--knowledge-first-after-ask requires --dynamic-tool-mask")
+    if args.episode_chunk_size < 0:
+        parser.error("--episode-chunk-size must be non-negative")
+    if args.resume_partial and not (args.episode_major or args.episode_chunk_size > 0):
+        parser.error("--resume-partial requires --episode-major or --episode-chunk-size")
 
     adapter_specs: list[tuple[str, Path]] = []
     for value in args.adapter_spec:
@@ -148,15 +200,37 @@ def main() -> None:
     # 512 tokens and wait forever in vLLM's scheduler.  Bound only the active
     # request; the configured maximum remains unchanged for shorter prompts.
     unbounded_generate = llm.generate
+    allowed_names_by_prompt: dict[str, set[str]] = {}
 
     def context_bounded_generate(prompts, sampling_params, *generate_args, **generate_kwargs):
-        if hasattr(sampling_params, "max_tokens"):
-            prompt_lengths = [len(tokenizer.encode(prompt)) for prompt in prompts]
+        prompt_list = [prompts] if isinstance(prompts, str) else list(prompts)
+        active_sampling_params = sampling_params
+        if args.constrained_tool_names:
+            constrained = []
+            for prompt in prompt_list:
+                available = allowed_names_by_prompt.get(prompt)
+                if available is None:
+                    raise RuntimeError("Missing dynamic tool state for constrained decoding")
+                request_params = sampling_params.clone()
+                request_params.max_tokens = bounded_generation_tokens(
+                    [len(tokenizer.encode(prompt))],
+                    args.max_new_tokens,
+                    args.max_model_len,
+                )
+                request_params.bad_words = hidden_tool_bad_words(
+                    available,
+                    set(enabled_names),
+                )
+                request_params.update_from_tokenizer(tokenizer)
+                constrained.append(request_params)
+            active_sampling_params = constrained[0] if isinstance(prompts, str) else constrained
+        elif hasattr(sampling_params, "max_tokens"):
+            prompt_lengths = [len(tokenizer.encode(prompt)) for prompt in prompt_list]
             sampling_params.max_tokens = bounded_generation_tokens(
                 prompt_lengths, args.max_new_tokens, args.max_model_len
             )
         return unbounded_generate(
-            prompts, sampling_params, *generate_args, **generate_kwargs
+            prompts, active_sampling_params, *generate_args, **generate_kwargs
         )
 
     llm.generate = context_bounded_generate
@@ -185,10 +259,20 @@ def main() -> None:
                 return getattr(base_tokenizer, name)
 
             def apply_chat_template(self, conversation, *, tools=None, **kwargs):
-                active = select_dynamic_tool_schemas(conversation, list(tools or []))
-                return base_tokenizer.apply_chat_template(
+                active = select_dynamic_tool_schemas(
+                    conversation,
+                    list(tools or []),
+                    knowledge_first_after_ask=args.knowledge_first_after_ask,
+                )
+                rendered = base_tokenizer.apply_chat_template(
                     conversation, tools=active, **kwargs
                 )
+                if isinstance(rendered, str):
+                    allowed_names_by_prompt[rendered] = {
+                        str(schema.get("function", {}).get("name", ""))
+                        for schema in active
+                    }
+                return rendered
 
         tokenizer = DynamicToolTokenizer()
 
@@ -196,13 +280,54 @@ def main() -> None:
     # global.  Patch the imported module only in this process; the frozen Stage
     # 5 source file and protocol remain unchanged.
     evaluator.TOOL_NAMES = enabled_names
-    if args.state_guards:
+    if args.state_guards or args.dynamic_tool_mask or args.audited_repair_controller:
         unguarded_execute_action = evaluator.execute_action
 
         async def guarded_execute_action(state, active_tools, name, arguments):
-            if is_exact_duplicate_retrieval(state.trajectory, name, arguments):
+            if args.dynamic_tool_mask:
+                available = select_dynamic_tool_names(
+                    state.trajectory,
+                    set(active_tools),
+                    knowledge_first_after_ask=args.knowledge_first_after_ask,
+                )
+                if name not in available:
+                    return dynamic_mask_response(name, available)
+            if args.state_guards and is_exact_duplicate_retrieval(state.trajectory, name, arguments):
                 return duplicate_retrieval_response(name)
-            return await unguarded_execute_action(state, active_tools, name, arguments)
+            controller_metrics = {}
+            if args.audited_repair_controller and name == "execute_sql":
+                proposed_sql = str(arguments.get("sql", "")).strip()
+                stale_sql = str(state.record.get("extra_info", {}).get("stale_sql", ""))
+                repaired_sql = should_apply_audited_repair(
+                    state.trajectory,
+                    proposed_sql,
+                    stale_sql,
+                )
+                if repaired_sql:
+                    # ``execute_turn`` retains this same arguments object in
+                    # the trajectory, so the executed SQL remains auditable.
+                    arguments["sql"] = repaired_sql
+                    controller_metrics = {
+                        "audited_repair_controller": True,
+                        "model_proposed_sql": proposed_sql,
+                        "audited_repair_sql": repaired_sql,
+                    }
+            response, metrics = await unguarded_execute_action(
+                state, active_tools, name, arguments
+            )
+            metrics = {**metrics, **controller_metrics}
+            if args.knowledge_first_after_ask and name == "ask_user":
+                required = (
+                    "get_knowledge_definition"
+                    if "get_knowledge_definition" in active_tools
+                    else "execute_sql"
+                )
+                transition, transition_metrics = clarification_transition_response(
+                    response,
+                    required,
+                )
+                return transition, {**metrics, **transition_metrics}
+            return response, metrics
 
         evaluator.execute_action = guarded_execute_action
     variants: list[tuple[str, Any]] = []
@@ -216,8 +341,26 @@ def main() -> None:
     summaries = []
     for alias, request in variants:
         if args.episode_major:
-            rows = []
-            for index, record in enumerate(records, 1):
+            partial_path = args.output_dir / f".{alias}.partial.jsonl"
+            if partial_path.exists() and not args.resume_partial:
+                raise FileExistsError(
+                    f"Partial checkpoint exists: {partial_path}; pass --resume-partial"
+                )
+            rows = evaluator.load_jsonl(partial_path) if partial_path.is_file() else []
+            if len(rows) > len(records):
+                raise RuntimeError(
+                    f"Partial checkpoint has {len(rows)} rows for {len(records)} records"
+                )
+            for index, row in enumerate(rows):
+                expected = str(records[index]["extra_info"]["instance_id"])
+                if str(row.get("instance_id")) != expected:
+                    raise RuntimeError(
+                        f"Partial checkpoint order mismatch at {index}: "
+                        f"{row.get('instance_id')} != {expected}"
+                    )
+            if rows:
+                print(f"{alias}: resumed {len(rows)}/{len(records)} episodes", flush=True)
+            for index, record in enumerate(records[len(rows) :], len(rows) + 1):
                 episode_rows, _ = evaluator.run_variant(
                     llm=llm,
                     tokenizer=tokenizer,
@@ -231,9 +374,64 @@ def main() -> None:
                     max_model_len=args.max_model_len,
                     lora_request=request,
                     terminal_submit_fallback=args.terminal_submit_fallback,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    seed=args.seed,
                 )
                 rows.extend(episode_rows)
+                with partial_path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(episode_rows[0], ensure_ascii=False, default=str) + "\n"
+                    )
+                    handle.flush()
                 print(f"{alias}: completed episode {index}/{len(records)}", flush=True)
+            summary = evaluator.summarize(alias, rows)
+        elif args.episode_chunk_size > 0:
+            partial_path = args.output_dir / f".{alias}.chunked.partial.jsonl"
+            if partial_path.exists() and not args.resume_partial:
+                raise FileExistsError(
+                    f"Chunked partial checkpoint exists: {partial_path}; pass --resume-partial"
+                )
+            rows = evaluator.load_jsonl(partial_path) if partial_path.is_file() else []
+            if len(rows) > len(records):
+                raise RuntimeError(
+                    f"Chunked partial has {len(rows)} rows for {len(records)} records"
+                )
+            for index, row in enumerate(rows):
+                expected = str(records[index]["extra_info"]["instance_id"])
+                if str(row.get("instance_id")) != expected:
+                    raise RuntimeError(
+                        f"Chunked partial order mismatch at {index}: "
+                        f"{row.get('instance_id')} != {expected}"
+                    )
+            if rows:
+                print(f"{alias}: resumed {len(rows)}/{len(records)} chunked episodes", flush=True)
+            while len(rows) < len(records):
+                start = len(rows)
+                stop = min(start + args.episode_chunk_size, len(records))
+                chunk_rows, _ = evaluator.run_variant(
+                    llm=llm,
+                    tokenizer=tokenizer,
+                    records=records[start:stop],
+                    tools=tools,
+                    schemas=schemas,
+                    alias=alias,
+                    batch_size=args.batch_size,
+                    max_turns=args.max_turns,
+                    max_new_tokens=args.max_new_tokens,
+                    max_model_len=args.max_model_len,
+                    lora_request=request,
+                    terminal_submit_fallback=args.terminal_submit_fallback,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    seed=args.seed,
+                )
+                rows.extend(chunk_rows)
+                with partial_path.open("a", encoding="utf-8") as handle:
+                    for row in chunk_rows:
+                        handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+                    handle.flush()
+                print(f"{alias}: completed chunk {stop}/{len(records)}", flush=True)
             summary = evaluator.summarize(alias, rows)
         else:
             rows, summary = evaluator.run_variant(
@@ -249,6 +447,9 @@ def main() -> None:
                 max_model_len=args.max_model_len,
                 lora_request=request,
                 terminal_submit_fallback=args.terminal_submit_fallback,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                seed=args.seed,
             )
         evaluator.write_jsonl(args.output_dir / f"{alias}.jsonl", rows)
         summaries.append(summary)
@@ -262,10 +463,23 @@ def main() -> None:
                 "disabled_tools": list(args.disable_tool),
                 "state_guards": bool(args.state_guards),
                 "dynamic_tool_mask": bool(args.dynamic_tool_mask),
+                "constrained_tool_names": bool(args.constrained_tool_names),
+                "knowledge_first_after_ask": bool(args.knowledge_first_after_ask),
+                "audited_repair_controller": bool(args.audited_repair_controller),
                 "async_scheduling": not args.disable_async_scheduling,
                 "prefix_caching": not args.disable_prefix_caching,
                 "episode_major": bool(args.episode_major),
+                "episode_chunk_size": args.episode_chunk_size,
+                "append_only_partial_checkpoint": bool(
+                    args.episode_major or args.episode_chunk_size > 0
+                ),
+                "resumed_partial": bool(args.resume_partial),
                 "context_bounded_generation": True,
+                "sampling": {
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "seed": args.seed,
+                },
                 "offset": args.offset,
                 "variants": summaries,
             },

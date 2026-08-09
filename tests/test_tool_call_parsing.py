@@ -77,6 +77,26 @@ def test_tagged_json_remains_supported() -> None:
     ]
 
 
+def test_qwen_native_function_tag_with_apostrophe_is_parsed() -> None:
+    output = (
+        '<think>Ask one focused question.</think>\n'
+        '<function name="ask_user" arguments=\'{"question": "What does \'region\' mean?"}\' />'
+    )
+    assert extract_tool_call_dicts(output) == [
+        {"name": "ask_user", "arguments": {"question": "What does 'region' mean?"}}
+    ]
+
+
+def test_native_function_argument_name_is_not_scanned_as_a_second_call() -> None:
+    output = (
+        '<function name="get_knowledge_definition" '
+        'arguments=\'{"name": "net revenue"}\' />'
+    )
+    assert extract_tool_call_dicts(output) == [
+        {"name": "get_knowledge_definition", "arguments": {"name": "net revenue"}}
+    ]
+
+
 def test_reward_scanner_ignores_tool_observations() -> None:
     trajectory = "\n".join(
         (

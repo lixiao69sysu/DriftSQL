@@ -88,8 +88,7 @@ export DRIFTSQL_TMPDIR="$PWD/tmp"
   --input-dir data/processed/stratified_five_tool_v2 \
   --output-dir data/processed/stratified_five_tool_next_action_v2 \
   --plain-json-targets
-CUDA_VISIBLE_DEVICES=0,2,3 \
-  bash scripts/train_7b_stratified_five_tool_sft.sh
+.venv/bin/python scripts/prepare_p6_generalized_protocol.py
 ```
 
 The replay step materializes one isolated active database per trajectory,
@@ -99,7 +98,6 @@ default.  Its outputs include trajectory SFT parquet, next-action SFT parquet,
 GRPO parquet, manifests, agent-evaluation JSONL, and summary reports for all
 three splits.
 
-The formal V2 SFT launcher uses Qwen2.5-Coder-7B-Instruct, warm-starts from the
-existing 7B Tool-SFT adapter, and uses a 6,144-token limit. This retains the four legacy
-wide-schema tasks that exceeded the old 4,096-token cap, without truncating
-the verified tool observation.
+The maintained P6 adapter uses Qwen2.5-Coder-7B-Instruct and a 6,144-token
+limit. This retains the four legacy wide-schema tasks that exceeded the old
+4,096-token cap without truncating the verified tool observation.

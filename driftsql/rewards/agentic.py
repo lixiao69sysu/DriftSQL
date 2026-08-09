@@ -128,6 +128,8 @@ def _empty_result(**updates: Any) -> dict[str, Any]:
         # the Stage-5 failure miner join a failed rollout back to the exact
         # training record without brittle prompt or SQL matching.
         "instance_id": "",
+        "coverage_index": -1,
+        "reward_version": "v1",
         "score": 0.0,
         "format_valid": False,
         "execution_success": False,
@@ -137,10 +139,28 @@ def _empty_result(**updates: Any) -> dict[str, Any]:
         "schema_retrieved": False,
         "knowledge_retrieved": False,
         "tested_solution": False,
+        "clarification_required": False,
+        "clarification_attempted": False,
+        "post_clarification_valid": False,
+        "terminal_validated": False,
+        "add_column_inspected": False,
+        "ordered_drift_inspection": False,
+        "candidate_task_success": False,
+        "add_column_candidate_validated": False,
+        "add_column_protocol_complete": False,
+        "protocol_success": False,
+        "decision_target_action": "",
+        "decision_action": "",
+        "decision_action_correct": False,
+        "premature_stale_execute": False,
         "efficient": False,
         "tool_calls": 0,
         "sql_executions": 0,
         "response_tokens": 0,
+        "key_action_mask_tokens": 0,
+        "advantage_scope": "",
+        "episode_response_mask_tokens": 0,
+        "advantage_mask_tokens": 0,
         "duplicate_questions": 0,
         "duplicate_executions": 0,
         "excess_clarifications": 0,
@@ -155,6 +175,14 @@ def _empty_result(**updates: Any) -> dict[str, Any]:
         "reward_clarify": 0.0,
         "reward_valid": 0.0,
         "reward_efficient": 0.0,
+        "reward_required_clarification": 0.0,
+        "reward_clarification_attempt": 0.0,
+        "reward_post_clarification": 0.0,
+        "reward_terminal": 0.0,
+        "reward_add_column_inspect": 0.0,
+        "reward_semantic_candidate": 0.0,
+        "reward_add_column": 0.0,
+        "reward_decision_action": 0.0,
         "penalty_tool_cost": 0.0,
         "penalty_token_cost": 0.0,
         "penalty_duplicate": 0.0,
@@ -164,6 +192,12 @@ def _empty_result(**updates: Any) -> dict[str, Any]:
         "penalty_turn_limit": 0.0,
         "penalty_missing_submit": 0.0,
         "penalty_unsafe": 0.0,
+        "penalty_missing_required_clarification": 0.0,
+        "penalty_invalid_post_clarification": 0.0,
+        "penalty_unmatched_clarification": 0.0,
+        "penalty_add_column_protocol": 0.0,
+        "penalty_decision_action": 0.0,
+        "penalty_premature_stale_execute": 0.0,
         "error": "",
     }
     result.update(updates)
@@ -190,7 +224,22 @@ def compute_score(
     turn_limit_penalty: float = 0.3,
     missing_submit_penalty: float = 0.2,
     unsafe_penalty: float = 1.0,
+    required_clarification_weight: float = 0.0,
+    clarification_attempt_weight: float = 0.0,
+    post_clarification_weight: float = 0.0,
+    terminal_weight: float = 0.0,
+    add_column_inspect_weight: float = 0.0,
+    semantic_candidate_weight: float = 0.0,
+    add_column_weight: float = 0.0,
+    decision_action_weight: float = 0.0,
+    decision_action_mismatch_penalty: float = 0.0,
+    premature_stale_execute_penalty: float = 0.0,
+    missing_required_clarification_penalty: float = 0.0,
+    invalid_post_clarification_penalty: float = 0.0,
+    unmatched_clarification_penalty: float = 0.0,
+    add_column_protocol_penalty: float = 0.0,
     efficient_tool_calls: int = 6,
+    reward_version: str = "v1",
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Score one trajectory using live tool metrics and database execution.
@@ -201,12 +250,53 @@ def compute_score(
     """
 
     del data_source, ground_truth, kwargs
+    if reward_version not in {"v1", "v2", "v3"}:
+        raise ValueError(f"Unsupported reward_version: {reward_version}")
+    reward_v2 = reward_version == "v2"
+    reward_v3 = reward_version == "v3"
+    execution_grounded_shaping = reward_v2 or reward_v3
     extra_info = dict(extra_info or {})
     calls = extract_tool_calls(solution_str)
     events = _events(extra_info)
     names = [str(call.get("name", "")) for call in calls]
-    inspected_drift = {"get_schema_version", "inspect_schema_diff"}.issubset(names)
     event_metrics = [dict(event.get("metrics", {}) or {}) for event in events]
+    if events:
+        unmasked_events = [
+            event
+            for event in events
+            if not bool((event.get("metrics", {}) or {}).get("action_masked"))
+        ]
+        unmasked_event_names = [
+            str(event.get("tool", event.get("tool_name", "")))
+            for event in unmasked_events
+        ]
+        unmasked_action_arguments = [
+            _arguments({"arguments": event.get("arguments", {})})
+            for event in unmasked_events
+        ]
+        inspected_drift = {"get_schema_version", "inspect_schema_diff"}.issubset(
+            unmasked_event_names
+        )
+    else:
+        unmasked_events = []
+        unmasked_event_names = names
+        unmasked_action_arguments = [_arguments(call) for call in calls]
+        inspected_drift = {"get_schema_version", "inspect_schema_diff"}.issubset(names)
+
+    version_index = -1
+    diff_index = -1
+    try:
+        version_index = unmasked_event_names.index("get_schema_version")
+        diff_index = unmasked_event_names.index("inspect_schema_diff")
+        ordered_drift_inspection = version_index < diff_index
+    except ValueError:
+        ordered_drift_inspection = False
+
+    decision_target_action = str(extra_info.get("decision_target_action", ""))
+    decision_action = unmasked_event_names[0] if unmasked_event_names else ""
+    decision_action_correct = bool(
+        decision_target_action and decision_action == decision_target_action
+    )
 
     ask_calls = [call for call in calls if call.get("name") == "ask_user"]
     execute_calls = [call for call in calls if call.get("name") == "execute_sql"]
@@ -245,6 +335,66 @@ def compute_score(
         _normalise_sql(sql) for sql in execution_sql if sql
     }
 
+    interaction_profile = str(extra_info.get("interaction_profile", ""))
+    drift_type = str(extra_info.get("drift_type", ""))
+    clarification_required = interaction_profile == "must_ask"
+
+    # The verified P6 contract permits exactly one stale-query execution as the
+    # first observation. Silent add-column drift makes that wildcard query
+    # executable, so the actual shortcut is submitting it immediately (or
+    # repeating it) without the required version/diff inspection. Do not
+    # penalise the canonical first probe itself.
+    premature_stale_execute = False
+    stale_sql = str(extra_info.get("stale_sql", "")).strip()
+    if drift_type == "add_column" and stale_sql:
+        stale_normalized = _normalise_sql(stale_sql)
+        stale_execute_indices = [
+            index
+            for index, (name, action_arguments) in enumerate(
+                zip(unmasked_event_names, unmasked_action_arguments, strict=True)
+            )
+            if name == "execute_sql"
+            and _normalise_sql(str(action_arguments.get("sql", "")))
+            == stale_normalized
+        ]
+        stale_submit_indices = [
+            index
+            for index, (name, action_arguments) in enumerate(
+                zip(unmasked_event_names, unmasked_action_arguments, strict=True)
+            )
+            if name == "submit_solution"
+            and _normalise_sql(str(action_arguments.get("sql", "")))
+            == stale_normalized
+        ]
+        ordered_inspection_end = diff_index if version_index < diff_index else -1
+        stale_submit_without_inspection = any(
+            ordered_inspection_end < 0 or submit_index < ordered_inspection_end
+            for submit_index in stale_submit_indices
+        )
+        repeated_stale_before_inspection = sum(
+            ordered_inspection_end < 0 or execute_index < ordered_inspection_end
+            for execute_index in stale_execute_indices
+        ) > 1
+        premature_stale_execute = bool(
+            stale_submit_without_inspection or repeated_stale_before_inspection
+        )
+
+    # Reward the state transition after a real, unmasked clarification rather
+    # than the lexical presence of an ask_user call.  Old rollout artifacts do
+    # not have environment events, so retain a conservative call-order fallback.
+    event_names = unmasked_event_names
+    try:
+        ask_index = event_names.index("ask_user")
+    except ValueError:
+        ask_index = -1
+    clarification_attempted = ask_index >= 0
+    post_clarification_valid = bool(
+        ask_index >= 0
+        and ask_index + 1 < len(event_names)
+        and event_names[ask_index + 1]
+        in {"get_knowledge_definition", "execute_sql"}
+    )
+
     invalid_actions = sum(name not in ALLOWED_TOOLS for name in names)
     invalid_sql = 0
     unsafe = False
@@ -281,13 +431,36 @@ def compute_score(
     format_valid = format_valid and final_read_only
     missing_submit = not format_valid
     execution_success = False
+    candidate_task_success = False
+    correct_candidate_sql: set[str] = set()
+    candidate_events: list[tuple[int, str]] = []
+    if events:
+        for index, event in enumerate(unmasked_events):
+            if str(event.get("tool", event.get("tool_name", ""))) != "execute_sql":
+                continue
+            arguments = event.get("arguments", {}) or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            sql = str(arguments.get("sql", "")).strip() if isinstance(arguments, dict) else ""
+            if sql:
+                candidate_events.append((index, sql))
+    else:
+        candidate_events = [
+            (index, _argument_sql(call))
+            for index, call in enumerate(calls)
+            if call.get("name") == "execute_sql" and _argument_sql(call)
+        ]
     task_success = False
     error = final_error if not final_read_only else ""
 
     source_db = Path(str(extra_info.get("source_db", ""))).resolve()
     schema_diff = extra_info.get("schema_diff")
     expected = extra_info.get("result_fingerprint", {}) or {}
-    if final_read_only and source_db.is_file() and schema_diff and expected:
+    environment_ready = bool(source_db.is_file() and schema_diff and expected)
+    if environment_ready and (final_read_only or candidate_events):
         try:
             with tempfile.TemporaryDirectory(
                 prefix="driftsql-reward-",
@@ -296,25 +469,79 @@ def compute_score(
             ) as temp_dir:
                 database = Path(temp_dir) / f"{extra_info.get('db_id', 'db')}__v2.sqlite"
                 materialize_schema_diff(source_db, database, schema_diff)
-                predicted = fingerprint_query(
-                    database,
-                    submitted_sql,
-                    timeout_seconds=float(os.environ.get("DRIFTSQL_REWARD_TIMEOUT", "30")),
-                )
-            execution_success = True
-            task_success = (
-                predicted.row_count == int(expected.get("row_count", -1))
-                and predicted.value_hash == str(expected.get("value_hash", ""))
-            )
+                timeout_seconds = float(os.environ.get("DRIFTSQL_REWARD_TIMEOUT", "30"))
+                if final_read_only:
+                    try:
+                        predicted = fingerprint_query(
+                            database,
+                            submitted_sql,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        execution_success = True
+                        task_success = (
+                            predicted.row_count == int(expected.get("row_count", -1))
+                            and predicted.value_hash == str(expected.get("value_hash", ""))
+                        )
+                    except (OSError, sqlite3.Error, ValueError, NotImplementedError) as caught:
+                        error = f"execution_error: {caught}"
+                        timed_out = timed_out or "interrupt" in str(caught).casefold()
+                if execution_grounded_shaping and task_success and any(
+                    _normalise_sql(candidate_sql) == _normalise_sql(submitted_sql)
+                    for _index, candidate_sql in candidate_events
+                ):
+                    candidate_task_success = True
+                    correct_candidate_sql.add(_normalise_sql(submitted_sql))
+                for _index, candidate_sql in candidate_events if execution_grounded_shaping else []:
+                    if candidate_task_success:
+                        break
+                    read_only, _candidate_error = _is_read_query(candidate_sql)
+                    if not read_only:
+                        continue
+                    if final_read_only and _normalise_sql(candidate_sql) == _normalise_sql(
+                        submitted_sql
+                    ):
+                        if task_success:
+                            candidate_task_success = True
+                            correct_candidate_sql.add(_normalise_sql(candidate_sql))
+                        continue
+                    try:
+                        candidate = fingerprint_query(
+                            database,
+                            candidate_sql,
+                            timeout_seconds=timeout_seconds,
+                        )
+                    except (OSError, sqlite3.Error, ValueError, NotImplementedError):
+                        continue
+                    if (
+                        candidate.row_count == int(expected.get("row_count", -1))
+                        and candidate.value_hash == str(expected.get("value_hash", ""))
+                    ):
+                        candidate_task_success = True
+                        correct_candidate_sql.add(_normalise_sql(candidate_sql))
         except (OSError, sqlite3.Error, ValueError, NotImplementedError) as caught:
             error = f"execution_error: {caught}"
             timed_out = timed_out or "interrupt" in str(caught).casefold()
     elif final_read_only:
         error = "missing_environment_metadata"
 
+    add_column_candidate_validated = bool(
+        drift_type == "add_column"
+        and ordered_drift_inspection
+        and any(
+            index > diff_index and _normalise_sql(sql) in correct_candidate_sql
+            for index, sql in candidate_events
+        )
+    )
+
     response_tokens = int(
         extra_info.get("response_tokens", extra_info.get("response_len", 0)) or 0
     )
+    key_action_mask_tokens = int(extra_info.get("key_action_mask_tokens", 0) or 0)
+    advantage_scope = str(extra_info.get("advantage_scope", ""))
+    episode_response_mask_tokens = int(
+        extra_info.get("episode_response_mask_tokens", 0) or 0
+    )
+    advantage_mask_tokens = int(extra_info.get("advantage_mask_tokens", 0) or 0)
     efficient = bool(
         task_success
         and len(calls) <= efficient_tool_calls
@@ -322,18 +549,90 @@ def compute_score(
         and duplicate_executions == 0
     )
 
-    reward_success = success_weight if task_success else 0.0
     # Clarification is useful only if the trajectory eventually submits.  This
     # prevents a correctly phrased question followed by six wasted actions
     # from outscoring a concise failed submission.
     reward_clarify = clarify_weight if clarification_matched and format_valid else 0.0
-    if execution_success:
+    if execution_grounded_shaping:
+        reward_valid = 0.0
+    elif execution_success:
         reward_valid = valid_weight
     elif event_execution_success:
         reward_valid = valid_weight * 0.5
     else:
         reward_valid = 0.0
-    reward_efficient = efficient_weight if efficient else 0.0
+    terminal_validated = bool(format_valid and tested_solution)
+    add_column_inspected = bool(
+        drift_type == "add_column"
+        and (ordered_drift_inspection if execution_grounded_shaping else inspected_drift)
+    )
+    if execution_grounded_shaping:
+        add_column_protocol_complete = bool(
+            add_column_inspected
+            and add_column_candidate_validated
+            and terminal_validated
+            and task_success
+        )
+    else:
+        add_column_protocol_complete = bool(add_column_inspected and terminal_validated)
+    drift_protocol_complete = bool(
+        drift_type in {"", "clean"} or ordered_drift_inspection
+    )
+    clarification_protocol_complete = bool(
+        not clarification_required
+        or (clarification_matched and post_clarification_valid)
+    )
+    protocol_success = bool(
+        task_success
+        and terminal_validated
+        and drift_protocol_complete
+        and clarification_protocol_complete
+        and (drift_type != "add_column" or add_column_protocol_complete)
+    )
+    reward_success = (
+        success_weight if (protocol_success if reward_v3 else task_success) else 0.0
+    )
+    reward_efficient = (
+        efficient_weight
+        if efficient and (protocol_success if reward_v3 else True)
+        else 0.0
+    )
+    reward_required_clarification = (
+        required_clarification_weight
+        if clarification_required and clarification_matched
+        else 0.0
+    )
+    reward_clarification_attempt = (
+        clarification_attempt_weight
+        if not execution_grounded_shaping
+        and clarification_required
+        and clarification_attempted
+        else 0.0
+    )
+    reward_post_clarification = (
+        post_clarification_weight
+        if clarification_required
+        and post_clarification_valid
+        and (clarification_matched if execution_grounded_shaping else True)
+        else 0.0
+    )
+    reward_terminal = (
+        terminal_weight
+        if terminal_validated and (task_success if execution_grounded_shaping else True)
+        else 0.0
+    )
+    reward_add_column_inspect = (
+        add_column_inspect_weight if add_column_inspected else 0.0
+    )
+    reward_semantic_candidate = (
+        semantic_candidate_weight
+        if execution_grounded_shaping and candidate_task_success
+        else 0.0
+    )
+    reward_add_column = add_column_weight if add_column_protocol_complete else 0.0
+    reward_decision_action = (
+        decision_action_weight if decision_action_correct else 0.0
+    )
     penalty_tool_cost = tool_call_cost * len(calls)
     penalty_token_cost = min(0.1, token_cost * response_tokens)
     penalty_duplicate = duplicate_penalty * (duplicate_questions + duplicate_executions)
@@ -345,11 +644,51 @@ def compute_score(
     penalty_turn_limit_value = turn_limit_penalty if turn_limit else 0.0
     penalty_missing_submit_value = missing_submit_penalty if missing_submit else 0.0
     penalty_unsafe_value = unsafe_penalty if unsafe else 0.0
+    penalty_missing_required_clarification = (
+        missing_required_clarification_penalty
+        if clarification_required and not clarification_attempted
+        else 0.0
+    )
+    penalty_unmatched_clarification = (
+        unmatched_clarification_penalty
+        if clarification_required
+        and clarification_attempted
+        and not clarification_matched
+        else 0.0
+    )
+    penalty_invalid_post_clarification = (
+        invalid_post_clarification_penalty
+        if clarification_required
+        and clarification_matched
+        and not post_clarification_valid
+        else 0.0
+    )
+    penalty_add_column_protocol = (
+        add_column_protocol_penalty
+        if drift_type == "add_column" and not add_column_protocol_complete
+        else 0.0
+    )
+    penalty_decision_action = (
+        decision_action_mismatch_penalty
+        if decision_target_action and not decision_action_correct
+        else 0.0
+    )
+    penalty_premature_stale_execute = (
+        premature_stale_execute_penalty if premature_stale_execute else 0.0
+    )
     score = (
         reward_success
         + reward_clarify
         + reward_valid
         + reward_efficient
+        + reward_required_clarification
+        + reward_clarification_attempt
+        + reward_post_clarification
+        + reward_terminal
+        + reward_add_column_inspect
+        + reward_semantic_candidate
+        + reward_add_column
+        + reward_decision_action
         - penalty_tool_cost
         - penalty_token_cost
         - penalty_duplicate
@@ -359,10 +698,18 @@ def compute_score(
         - penalty_turn_limit_value
         - penalty_missing_submit_value
         - penalty_unsafe_value
+        - penalty_missing_required_clarification
+        - penalty_invalid_post_clarification
+        - penalty_unmatched_clarification
+        - penalty_add_column_protocol
+        - penalty_decision_action
+        - penalty_premature_stale_execute
     )
 
     return _empty_result(
         instance_id=str(extra_info.get("instance_id", "")),
+        coverage_index=int(extra_info.get("index", -1)),
+        reward_version=reward_version,
         score=score,
         format_valid=format_valid,
         execution_success=execution_success,
@@ -372,10 +719,28 @@ def compute_score(
         schema_retrieved=schema_retrieved,
         knowledge_retrieved=knowledge_retrieved,
         tested_solution=tested_solution,
+        clarification_required=clarification_required,
+        clarification_attempted=clarification_attempted,
+        post_clarification_valid=post_clarification_valid,
+        terminal_validated=terminal_validated,
+        add_column_inspected=add_column_inspected,
+        ordered_drift_inspection=ordered_drift_inspection,
+        candidate_task_success=candidate_task_success,
+        add_column_candidate_validated=add_column_candidate_validated,
+        add_column_protocol_complete=add_column_protocol_complete,
+        protocol_success=protocol_success,
+        decision_target_action=decision_target_action,
+        decision_action=decision_action,
+        decision_action_correct=decision_action_correct,
+        premature_stale_execute=premature_stale_execute,
         efficient=efficient,
         tool_calls=len(calls),
         sql_executions=len(execute_calls),
         response_tokens=response_tokens,
+        key_action_mask_tokens=key_action_mask_tokens,
+        advantage_scope=advantage_scope,
+        episode_response_mask_tokens=episode_response_mask_tokens,
+        advantage_mask_tokens=advantage_mask_tokens,
         duplicate_questions=duplicate_questions,
         duplicate_executions=duplicate_executions,
         excess_clarifications=excess_clarifications,
@@ -390,6 +755,14 @@ def compute_score(
         reward_clarify=round(reward_clarify, 4),
         reward_valid=round(reward_valid, 4),
         reward_efficient=round(reward_efficient, 4),
+        reward_required_clarification=round(reward_required_clarification, 4),
+        reward_clarification_attempt=round(reward_clarification_attempt, 4),
+        reward_post_clarification=round(reward_post_clarification, 4),
+        reward_terminal=round(reward_terminal, 4),
+        reward_add_column_inspect=round(reward_add_column_inspect, 4),
+        reward_semantic_candidate=round(reward_semantic_candidate, 4),
+        reward_add_column=round(reward_add_column, 4),
+        reward_decision_action=round(reward_decision_action, 4),
         penalty_tool_cost=round(penalty_tool_cost, 4),
         penalty_token_cost=round(penalty_token_cost, 4),
         penalty_duplicate=round(penalty_duplicate, 4),
@@ -399,5 +772,17 @@ def compute_score(
         penalty_turn_limit=round(penalty_turn_limit_value, 4),
         penalty_missing_submit=round(penalty_missing_submit_value, 4),
         penalty_unsafe=round(penalty_unsafe_value, 4),
+        penalty_missing_required_clarification=round(
+            penalty_missing_required_clarification, 4
+        ),
+        penalty_invalid_post_clarification=round(
+            penalty_invalid_post_clarification, 4
+        ),
+        penalty_unmatched_clarification=round(penalty_unmatched_clarification, 4),
+        penalty_add_column_protocol=round(penalty_add_column_protocol, 4),
+        penalty_decision_action=round(penalty_decision_action, 4),
+        penalty_premature_stale_execute=round(
+            penalty_premature_stale_execute, 4
+        ),
         error=error or (parse_errors[-1] if parse_errors else ""),
     )

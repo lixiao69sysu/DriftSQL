@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from driftsql.environment import VersionedSQLite
+from driftsql.drift import fingerprint_query
 
 try:
     from verl.tools.schemas import OpenAIFunctionToolSchema
@@ -68,12 +69,17 @@ class VersionedSqlExecutorToolTest(unittest.TestCase):
             response, metrics = asyncio.run(scenario())
             payload = json.loads(response.text)
             plan = payload["projection_contract_plan"]
+            repair = payload["repair_candidate"]
             self.assertEqual(plan["wildcard_profile"], "single_table_qualified")
             self.assertEqual(plan["excluded_added_columns"], ["orders.audit_flag"])
             self.assertIn('src."order_id"', plan["repaired_sql"])
             self.assertNotIn("audit_flag", plan["repaired_sql"])
+            self.assertEqual(repair["repaired_sql"], plan["repaired_sql"])
+            self.assertTrue(repair["changed"])
             self.assertTrue(metrics["projection_contract_planned"])
+            self.assertTrue(metrics["repair_candidate_planned"])
             self.assertIsNone(metrics["projection_contract_error"])
+            self.assertIsNone(metrics["repair_candidate_error"])
 
     def test_executes_select_and_denies_update(self) -> None:
         with tempfile.TemporaryDirectory(prefix="driftsql-verl-tool-", dir="/tmp") as temp_dir:
@@ -137,6 +143,76 @@ class VersionedSqlExecutorToolTest(unittest.TestCase):
             self.assertTrue(select_metrics["execution_success"])
             self.assertFalse(update_result["success"])
             self.assertFalse(update_metrics["execution_success"])
+
+    def test_executor_exposes_boolean_contract_status_without_hashes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="driftsql-contract-tool-", dir="/tmp") as temp_dir:
+            environment = VersionedSQLite(Path(temp_dir), "retail")
+            db_path = environment.create(
+                "v2",
+                ddl=[
+                    "CREATE TABLE customers (customer_id INTEGER PRIMARY KEY, name TEXT)"
+                ],
+                seed_sql=["INSERT INTO customers VALUES (1, 'Ada')"],
+            )
+            expected = fingerprint_query(
+                db_path, "SELECT customer_id FROM customers ORDER BY customer_id"
+            )
+            schema = OpenAIFunctionToolSchema.model_validate(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_sql",
+                        "description": "Execute read-only SQL.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"sql": {"type": "string"}},
+                            "required": ["sql"],
+                        },
+                    },
+                }
+            )
+            tool = VersionedSqlExecutorTool(
+                {"timeout_seconds": 2, "max_rows": 10}, schema
+            )
+
+            async def scenario() -> tuple:
+                instance_id, _ = await tool.create(
+                    instance_id="contract-1",
+                    create_kwargs={
+                        "db_id": "retail",
+                        "db_path": str(db_path),
+                        "sync_io": True,
+                        "result_fingerprint": {
+                            "row_count": expected.row_count,
+                            "value_hash": expected.value_hash,
+                        },
+                    },
+                )
+                matching, _, matching_metrics = await tool.execute(
+                    instance_id,
+                    {"sql": "SELECT customer_id FROM customers ORDER BY customer_id"},
+                )
+                changed, _, changed_metrics = await tool.execute(
+                    instance_id,
+                    {"sql": "SELECT * FROM customers ORDER BY customer_id"},
+                )
+                await tool.release(instance_id)
+                return matching, matching_metrics, changed, changed_metrics
+
+            matching, matching_metrics, changed, changed_metrics = asyncio.run(scenario())
+            matching_payload = json.loads(matching.text)
+            changed_payload = json.loads(changed.text)
+
+            self.assertTrue(matching_payload["result_contract_match"])
+            self.assertTrue(matching_payload["validated_for_submit"])
+            self.assertFalse(matching_payload["requires_schema_recovery"])
+            self.assertFalse(changed_payload["result_contract_match"])
+            self.assertFalse(changed_payload["validated_for_submit"])
+            self.assertTrue(changed_payload["requires_schema_recovery"])
+            self.assertTrue(matching_metrics["result_contract_checked"])
+            self.assertFalse(changed_metrics["result_contract_match"])
+            self.assertNotIn(expected.value_hash, matching.text)
+            self.assertNotIn(expected.value_hash, changed.text)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ from driftsql.tool_calls import find_tool_calls, remove_tool_call_payloads
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA = PROJECT_ROOT / "data/processed/five_tool_sft/val_agent_eval.jsonl"
-DEFAULT_MODEL = PROJECT_ROOT / "models/Qwen2.5-Coder-3B-Instruct"
+DEFAULT_MODEL = PROJECT_ROOT / "models/Qwen2.5-Coder-7B-Instruct"
 DEFAULT_TOOLS = PROJECT_ROOT / "configs/tools/drift_tools.yaml"
 DEFAULT_OUTPUT = PROJECT_ROOT / "reports/stage3/five_tool_eval"
 TOOL_NAMES = (
@@ -290,6 +290,9 @@ def run_variant(
     max_model_len: int,
     lora_request: Any,
     terminal_submit_fallback: bool = False,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    seed: int = 42,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from vllm import SamplingParams
 
@@ -302,7 +305,12 @@ def run_variant(
         )
         for record in records
     ]
-    sampling = SamplingParams(temperature=0.0, max_tokens=max_new_tokens, seed=42)
+    sampling = SamplingParams(
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_new_tokens,
+        seed=seed,
+    )
     for turn in range(max_turns):
         active = [state for state in states if state.termination_reason == "running"]
         if not active:

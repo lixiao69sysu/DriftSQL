@@ -17,13 +17,15 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from verl.tools.base_tool import BaseTool
-from verl.tools.schemas import OpenAIFunctionToolSchema, ToolResponse
-from verl.utils.rollout_trace import rollout_trace_op
-
-from driftsql.drift import materialize_schema_diff
+from driftsql.drift import fingerprint_query, materialize_schema_diff
 from driftsql.integrations.state_policy import schema_diff_recovery_guidance
-from driftsql.planning import plan_projection_contract
+from driftsql.integrations.verl_compat import (
+    BaseTool,
+    OpenAIFunctionToolSchema,
+    ToolResponse,
+    rollout_trace_op,
+)
+from driftsql.planning import plan_audited_schema_repair, plan_projection_contract
 
 
 class _TrajectoryStateTool(BaseTool):
@@ -129,11 +131,15 @@ class InspectSchemaDiffTool(_TrajectoryStateTool):
             observation["recovery_guidance"] = guidance
         projection_planned = False
         projection_error = None
+        repair_planned = False
+        repair_error = None
         operations = observation.get("operations", []) or []
-        if any(
+        has_add_column = any(
             isinstance(operation, dict) and operation.get("type") == "add_column"
             for operation in operations
-        ):
+        )
+        active_schema = None
+        if has_add_column:
             try:
                 source_db = Path(str(state.get("source_db", "")))
                 if not source_db.is_file():
@@ -150,11 +156,27 @@ class InspectSchemaDiffTool(_TrajectoryStateTool):
                 # Non-wildcard add-column cases still receive the audited diff
                 # and normal recovery guidance; planner failure is observable.
                 projection_error = str(error)
+        if operations:
+            try:
+                repair = plan_audited_schema_repair(
+                    str(state.get("stale_sql", "")),
+                    observation,
+                    ordered_active_schema=active_schema,
+                )
+                observation["repair_candidate"] = repair.to_dict()
+                repair_planned = repair.changed
+            except ValueError as error:
+                # Metric-definition drift and unsupported SQL shapes remain
+                # model-owned.  The failure is explicit rather than silently
+                # inventing a semantically different query.
+                repair_error = str(error)
         return ToolResponse(text=json.dumps(observation, ensure_ascii=False)), 0.0, {
             "schema_diff_inspected": True,
             "recovery_guidance_count": len(guidance),
             "projection_contract_planned": projection_planned,
             "projection_contract_error": projection_error,
+            "repair_candidate_planned": repair_planned,
+            "repair_candidate_error": repair_error,
         }
 
 
@@ -228,7 +250,10 @@ class AskUserTool(_TrajectoryStateTool):
                 ranked.append((1 if phrase_match else 0, overlap, item))
         if not ranked:
             return ToolResponse(
-                text="I cannot answer that from the stated business requirements. Please ask about one ambiguous term in the request."
+                text=(
+                    "I cannot answer that from the stated business requirements. "
+                    "Please ask about one ambiguous term in the request."
+                )
             ), 0.0, {"clarification_matched": False, "unanswerable_question": True}
 
         ranked.sort(key=lambda entry: (entry[0], entry[1], -entry[2]["_priority"]), reverse=True)
@@ -576,6 +601,46 @@ class VersionedSqlExecutorTool(_TrajectoryStateTool):
                 timeout_seconds,
                 max_rows,
             )
+
+        # The policy must be able to distinguish "SQL executed" from "the
+        # cached result contract is still valid".  Only expose the boolean
+        # decision; expected/actual fingerprints and answer data remain hidden.
+        # This mirrors the execution-verified terminal-action SFT protocol and
+        # prevents silent AddColumn wildcard drift from looking like success.
+        contract_checked = False
+        contract_match: bool | None = None
+        contract_error: str | None = None
+        expected = dict(state.get("result_fingerprint", {}) or {})
+        if bool(result.get("success")) and expected:
+            try:
+                expected_count = int(expected["row_count"])
+                expected_hash = str(expected["value_hash"])
+                if not expected_hash:
+                    raise ValueError("empty expected result fingerprint")
+                if state.get("sync_io"):
+                    actual = fingerprint_query(
+                        Path(state["db_path"]), sql, timeout_seconds=timeout_seconds
+                    )
+                else:
+                    actual = await asyncio.to_thread(
+                        fingerprint_query,
+                        Path(state["db_path"]),
+                        sql,
+                        timeout_seconds=timeout_seconds,
+                    )
+                contract_checked = True
+                contract_match = bool(
+                    actual.row_count == expected_count
+                    and actual.value_hash == expected_hash
+                )
+            except (KeyError, TypeError, ValueError, sqlite3.Error) as error:
+                contract_error = f"{type(error).__name__}: {error}"
+
+        if expected:
+            result["result_contract_checked"] = contract_checked
+            result["result_contract_match"] = contract_match
+            result["validated_for_submit"] = contract_match is True
+            result["requires_schema_recovery"] = contract_match is False
         return (
             ToolResponse(text=json.dumps(result, ensure_ascii=False, default=str)),
             0.0,
@@ -585,6 +650,10 @@ class VersionedSqlExecutorTool(_TrajectoryStateTool):
                 "execution_elapsed_ms": result.get("elapsed_ms", 0.0),
                 "session_isolated": bool(state.get("session_isolated", False)),
                 "rolled_back": bool(result.get("rolled_back", False)),
+                "result_contract_checked": contract_checked,
+                "result_contract_match": contract_match,
+                "validated_for_submit": contract_match is True,
+                "result_contract_error": contract_error,
             },
         )
 

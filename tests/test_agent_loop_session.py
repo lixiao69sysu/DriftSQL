@@ -162,6 +162,7 @@ def test_agent_loop_reuses_state_releases_it_and_writes_full_trace(
 
     monkeypatch.setattr(ToolAgentLoop, "run", fake_parent_run)
     monkeypatch.setenv("DRIFTSQL_TRAJECTORY_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("DRIFTSQL_KEY_ACTION_MASK", "0")
     output = asyncio.run(
         loop.run(
             {},
@@ -175,6 +176,9 @@ def test_agent_loop_reuses_state_releases_it_and_writes_full_trace(
     assert output.extra_fields["response_tokens"] == 2
     assert output.extra_fields["trajectory_timed_out"] is False
     assert output.extra_fields["trajectory_turn_limit"] is True
+    assert output.extra_fields["advantage_scope"] == "episode"
+    assert output.extra_fields["episode_response_mask_tokens"] == 2
+    assert output.extra_fields["advantage_mask_tokens"] == 2
     assert ask._instances == {}
     traces = list(tmp_path.glob("*.json"))
     assert len(traces) == 1

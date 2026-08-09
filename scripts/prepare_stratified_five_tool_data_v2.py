@@ -30,7 +30,7 @@ from driftsql.drift import fingerprint_query
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = PROJECT_ROOT / "data/processed/stratified_v2"
 DEFAULT_TOOLS = PROJECT_ROOT / "configs/tools/drift_tools.yaml"
-DEFAULT_TOKENIZER = PROJECT_ROOT / "models/Qwen2.5-Coder-3B-Instruct"
+DEFAULT_TOKENIZER = PROJECT_ROOT / "models/Qwen2.5-Coder-7B-Instruct"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data/processed/stratified_five_tool_v2"
 SPLITS = ("train", "dev", "test")
 TOOL_NAMES = ("get_schema", "ask_user", "get_knowledge_definition", "execute_sql", "submit_solution")
@@ -56,6 +56,43 @@ def write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     pq.write_table(pa.Table.from_pylist(rows), temporary)
     temporary.replace(path)
+
+
+def load_reuse_records(directory: Path, split: str) -> dict[str, tuple[Any, ...]]:
+    """Load previously execution-verified rows keyed by task id."""
+
+    manifest_path = directory / f"{split}_manifest.jsonl"
+    sft_path = directory / f"{split}.parquet"
+    rl_path = directory / f"rl_{split}.parquet"
+    if not (manifest_path.is_file() and sft_path.is_file() and rl_path.is_file()):
+        return {}
+    manifests = load_jsonl(manifest_path)
+    sft_rows = pq.read_table(sft_path).to_pylist()
+    rl_rows = pq.read_table(rl_path).to_pylist()
+    if not (len(manifests) == len(sft_rows) == len(rl_rows)):
+        raise RuntimeError(f"Misaligned reuse artifacts for {split} in {directory}")
+    return {
+        str(manifest["task_id"]): (
+            sft,
+            rl,
+            manifest,
+            int(manifest["token_count"]),
+        )
+        for sft, rl, manifest in zip(sft_rows, rl_rows, manifests, strict=True)
+    }
+
+
+def reuse_matches(row: dict[str, Any], record: tuple[Any, ...]) -> bool:
+    _, rl, manifest, _ = record
+    extra = rl["extra_info"]
+    return (
+        str(manifest["db_id"]) == str(row["db_id"])
+        and str(manifest["drift_type"]) == str(row["drift_type"])
+        and str(manifest["interaction_profile"]) == str(row["interaction_profile"])
+        and str(extra["stale_sql"]) == str(row["stale_sql"])
+        and extra["schema_diff"] == row["schema_diff"]
+        and extra["result_fingerprint"] == row["result_fingerprint"]
+    )
 
 
 def search_terms(row: dict[str, Any]) -> str:
@@ -340,6 +377,13 @@ async def build(args: argparse.Namespace) -> dict[str, Any]:
     rejected: list[dict[str, Any]] = []
     token_lengths: list[int] = []
     tool_counts: Counter[str] = Counter()
+    reuse_records = {
+        split: load_reuse_records(args.reuse_dir, split)
+        if args.reuse_dir is not None
+        else {}
+        for split in SPLITS
+    }
+    reused_counts: Counter[str] = Counter()
 
     for split in SPLITS:
         rows = load_jsonl(args.input_dir / f"{split}.jsonl")
@@ -348,8 +392,11 @@ async def build(args: argparse.Namespace) -> dict[str, Any]:
         for start in range(0, len(rows), args.concurrency):
             batch = rows[start : start + args.concurrency]
 
-            async def guarded(row: dict[str, Any]) -> tuple[Any, Exception | None]:
+            async def guarded(row: dict[str, Any]) -> tuple[Any, Exception | None, bool]:
                 try:
+                    reusable = reuse_records[split].get(str(row["task_id"]))
+                    if reusable is not None and reuse_matches(row, reusable):
+                        return reusable, None, True
                     return (
                         await replay_row(
                             row,
@@ -362,12 +409,13 @@ async def build(args: argparse.Namespace) -> dict[str, Any]:
                             debug=args.debug,
                         ),
                         None,
+                        False,
                     )
                 except Exception as error:  # noqa: BLE001 - rejection is a data artifact
-                    return None, error
+                    return None, error, False
 
             results = await asyncio.gather(*(guarded(row) for row in batch))
-            for offset, (row, (result, error)) in enumerate(zip(batch, results, strict=True)):
+            for offset, (row, (result, error, reused)) in enumerate(zip(batch, results, strict=True)):
                 index = start + offset
                 if error is not None:
                     rejected.append({
@@ -379,6 +427,9 @@ async def build(args: argparse.Namespace) -> dict[str, Any]:
                     continue
                 assert result is not None
                 sft, rl, manifest, token_count = result
+                if reused:
+                    reused_counts[split] += 1
+                    tool_counts.update(manifest["tool_sequence"])
                 records[split].append(sft)
                 rl_records[split].append(rl)
                 manifests[split].append(manifest)
@@ -418,6 +469,7 @@ async def build(args: argparse.Namespace) -> dict[str, Any]:
         "name": "driftsql_stratified_execution_verified_five_tool_v2",
         "accepted_rows": sum(len(values) for values in manifests.values()),
         "rejected_rows": len(rejected),
+        "reused_execution_verified_rows": dict(sorted(reused_counts.items())),
         "splits": {
             split: {
                 "rows": len(manifests[split]),
@@ -451,6 +503,12 @@ def main() -> None:
     parser.add_argument("--tools", type=Path, default=DEFAULT_TOOLS)
     parser.add_argument("--tokenizer", type=Path, default=DEFAULT_TOKENIZER)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--reuse-dir",
+        type=Path,
+        default=None,
+        help="Reuse matching task IDs from an earlier execution-verified five-tool dataset.",
+    )
     parser.add_argument("--max-schema-chars", type=int, default=3500)
     parser.add_argument("--max-result-rows", type=int, default=5)
     parser.add_argument("--max-tokens", type=int, default=6144)

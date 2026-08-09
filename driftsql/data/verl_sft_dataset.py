@@ -137,3 +137,131 @@ class JsonActionSFTDataset(LastAssistantSFTDataset):
                 raise ValueError(f"Expected one plain JSON action marker, got {len(starts)}")
             loss_mask[: starts[0]] = 0
         return input_ids, loss_mask, attention_mask, inputs
+
+
+class ActionNameSFTDataset(LastAssistantSFTDataset):
+    """Supervise only the selected tool-name tokens in a plain-JSON action.
+
+    Recovery examples primarily correct action selection. Long SQL arguments
+    otherwise dilute the few decisive tokens, so this objective keeps the
+    on-policy state and verified target while treating the action as a
+    classification-like intervention.
+    """
+
+    def _process_single_message(self, index, message, full_message, tools=None, enable_thinking=None):
+        input_ids, loss_mask, attention_mask, inputs = super()._process_single_message(
+            index=index,
+            message=message,
+            full_message=full_message,
+            tools=tools,
+            enable_thinking=enable_thinking,
+        )
+        if message["role"] == "assistant" and loss_mask.any():
+            try:
+                payload = json.loads(str(message.get("content", "")).rsplit("\n", 1)[-1])
+                target_action = str(payload["name"])
+            except (json.JSONDecodeError, KeyError, TypeError) as error:
+                raise ValueError("Final assistant message lacks a plain-JSON action") from error
+            marker = self.tokenizer.encode(target_action, add_special_tokens=False)
+            values = input_ids.tolist()
+            starts = [
+                position
+                for position in range(len(values) - len(marker) + 1)
+                if values[position : position + len(marker)] == marker
+                and bool(loss_mask[position : position + len(marker)].all())
+            ]
+            if len(starts) != 1:
+                raise ValueError(
+                    f"Expected one supervised {target_action} marker, got {len(starts)}"
+                )
+            focused = loss_mask == -1
+            start = starts[0]
+            focused[start : start + len(marker)] = True
+            loss_mask.mul_(focused.to(loss_mask.dtype))
+        return input_ids, loss_mask, attention_mask, inputs
+
+
+class DecisionPrefixSFTDataset(LastAssistantSFTDataset):
+    """Supervise the recovery rationale and action name, but not arguments.
+
+    Action-name-only teacher forcing leaks the answer through the preceding
+    golden ``<think>`` text: predicting ``execute_sql`` is trivial after the
+    model has already been handed a rationale saying it will execute SQL.  At
+    rollout time the model must generate that decision itself.  This objective
+    therefore keeps every supervised token of the final assistant response up
+    to and including the selected tool name, while masking the potentially
+    long SQL/tool arguments that would otherwise dominate the correction.
+    """
+
+    def _process_single_message(self, index, message, full_message, tools=None, enable_thinking=None):
+        input_ids, loss_mask, attention_mask, inputs = super()._process_single_message(
+            index=index,
+            message=message,
+            full_message=full_message,
+            tools=tools,
+            enable_thinking=enable_thinking,
+        )
+        if message["role"] == "assistant" and loss_mask.any():
+            try:
+                payload = json.loads(str(message.get("content", "")).rsplit("\n", 1)[-1])
+                target_action = str(payload["name"])
+            except (json.JSONDecodeError, KeyError, TypeError) as error:
+                raise ValueError("Final assistant message lacks a plain-JSON action") from error
+            marker = self.tokenizer.encode(target_action, add_special_tokens=False)
+            values = input_ids.tolist()
+            starts = [
+                position
+                for position in range(len(values) - len(marker) + 1)
+                if values[position : position + len(marker)] == marker
+                and bool(loss_mask[position : position + len(marker)].all())
+            ]
+            if len(starts) != 1:
+                raise ValueError(
+                    f"Expected one supervised {target_action} marker, got {len(starts)}"
+                )
+            supervised = loss_mask.nonzero().flatten()
+            if supervised.numel() == 0:
+                raise ValueError("Final assistant message has no supervised prefix")
+            focused = loss_mask == -1
+            start = int(supervised[0])
+            end = starts[0] + len(marker)
+            focused[start:end] = True
+            loss_mask.mul_(focused.to(loss_mask.dtype))
+        return input_ids, loss_mask, attention_mask, inputs
+
+
+class TerminalActionNameSFTDataset(LastAssistantSFTDataset):
+    """Supervise only the terminal tool-name tokens, not its long SQL argument.
+
+    Terminal-action correction is a classification-like intervention.  If the
+    copied SQL argument is included in the objective, hundreds of already-easy
+    SQL tokens dilute the few tokens that decide between another retrieval and
+    ``submit_solution``.
+    """
+
+    def _process_single_message(self, index, message, full_message, tools=None, enable_thinking=None):
+        input_ids, loss_mask, attention_mask, inputs = super()._process_single_message(
+            index=index,
+            message=message,
+            full_message=full_message,
+            tools=tools,
+            enable_thinking=enable_thinking,
+        )
+        if message["role"] == "assistant" and loss_mask.any():
+            marker = self.tokenizer.encode("submit_solution", add_special_tokens=False)
+            values = input_ids.tolist()
+            starts = [
+                position
+                for position in range(len(values) - len(marker) + 1)
+                if values[position : position + len(marker)] == marker
+                and bool(loss_mask[position : position + len(marker)].all())
+            ]
+            if len(starts) != 1:
+                raise ValueError(
+                    f"Expected one supervised submit_solution marker, got {len(starts)}"
+                )
+            focused = loss_mask == -1
+            start = starts[0]
+            focused[start : start + len(marker)] = True
+            loss_mask.mul_(focused.to(loss_mask.dtype))
+        return input_ids, loss_mask, attention_mask, inputs

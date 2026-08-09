@@ -238,6 +238,201 @@ class TrainingPipelineTest(unittest.TestCase):
         self.assertFalse(result["unsafe"])
         self.assertEqual(result["penalty_unsafe"], 0.0)
 
+    def test_targeted_reward_credits_required_clarification_and_terminal(self) -> None:
+        sql = "SELECT 1"
+        calls = _tool_trace(
+            [
+                ("ask_user", {"question": "Which active definition should I use?"}),
+                ("get_knowledge_definition", {"name": "active"}),
+                ("execute_sql", {"sql": sql}),
+                ("submit_solution", {"sql": sql}),
+            ]
+        )
+        events = [
+            {
+                "tool": "ask_user",
+                "metrics": {"clarification_matched": True},
+            },
+            {"tool": "get_knowledge_definition", "metrics": {}},
+            {"tool": "execute_sql", "metrics": {"execution_success": True}},
+            {"tool": "submit_solution", "metrics": {}},
+        ]
+        result = compute_score(
+            data_source="driftsql/test",
+            solution_str=calls,
+            ground_truth="",
+            extra_info={
+                "interaction_profile": "must_ask",
+                "environment_events": events,
+                "key_action_mask_tokens": 24,
+                "advantage_scope": "episode",
+                "episode_response_mask_tokens": 120,
+                "advantage_mask_tokens": 120,
+            },
+            required_clarification_weight=0.3,
+            post_clarification_weight=0.1,
+            terminal_weight=0.2,
+            missing_required_clarification_penalty=0.3,
+        )
+        self.assertTrue(result["clarification_required"])
+        self.assertTrue(result["clarification_attempted"])
+        self.assertTrue(result["post_clarification_valid"])
+        self.assertTrue(result["terminal_validated"])
+        self.assertEqual(result["reward_required_clarification"], 0.3)
+        self.assertEqual(result["reward_post_clarification"], 0.1)
+        self.assertEqual(result["reward_terminal"], 0.2)
+        self.assertEqual(result["penalty_missing_required_clarification"], 0.0)
+        self.assertEqual(result["key_action_mask_tokens"], 24)
+        self.assertEqual(result["advantage_scope"], "episode")
+        self.assertEqual(result["episode_response_mask_tokens"], 120)
+        self.assertEqual(result["advantage_mask_tokens"], 120)
+
+    def test_targeted_reward_separates_attempt_from_matched_clarification(self) -> None:
+        result = compute_score(
+            data_source="driftsql/test",
+            solution_str=_tool_trace(
+                [
+                    ("ask_user", {"question": "Could you clarify?"}),
+                    ("execute_sql", {"sql": "SELECT 1"}),
+                ]
+            ),
+            ground_truth="",
+            extra_info={"interaction_profile": "must_ask"},
+            clarification_attempt_weight=0.2,
+            missing_required_clarification_penalty=0.4,
+            unmatched_clarification_penalty=0.15,
+        )
+        self.assertTrue(result["clarification_attempted"])
+        self.assertFalse(result["clarification_matched"])
+        self.assertEqual(result["reward_clarification_attempt"], 0.2)
+        self.assertEqual(result["penalty_missing_required_clarification"], 0.0)
+        self.assertEqual(result["penalty_unmatched_clarification"], 0.15)
+
+    def test_matched_clarification_is_rewarded_before_terminal_submission(self) -> None:
+        result = compute_score(
+            data_source="driftsql/test",
+            solution_str=_tool_trace(
+                [
+                    ("ask_user", {"question": "Which active definition should I use?"}),
+                    ("get_knowledge_definition", {"name": "active"}),
+                ]
+            ),
+            ground_truth="",
+            extra_info={
+                "interaction_profile": "must_ask",
+                "environment_events": [
+                    {"tool": "ask_user", "metrics": {"clarification_matched": True}},
+                    {"tool": "get_knowledge_definition", "metrics": {}},
+                ],
+            },
+            required_clarification_weight=0.6,
+        )
+        self.assertTrue(result["clarification_matched"])
+        self.assertFalse(result["format_valid"])
+        self.assertEqual(result["reward_required_clarification"], 0.6)
+
+    def test_add_column_inspection_reward_requires_unmasked_version_and_diff(self) -> None:
+        calls = _tool_trace(
+            [
+                ("get_schema_version", {}),
+                ("inspect_schema_diff", {}),
+            ]
+        )
+        valid = compute_score(
+            data_source="driftsql/test",
+            solution_str=calls,
+            ground_truth="",
+            extra_info={
+                "drift_type": "add_column",
+                "environment_events": [
+                    {"tool": "get_schema_version", "metrics": {}},
+                    {"tool": "inspect_schema_diff", "metrics": {"schema_diff_inspected": True}},
+                ],
+            },
+            add_column_inspect_weight=0.4,
+        )
+        masked = compute_score(
+            data_source="driftsql/test",
+            solution_str=calls,
+            ground_truth="",
+            extra_info={
+                "drift_type": "add_column",
+                "environment_events": [
+                    {"tool": "get_schema_version", "metrics": {}},
+                    {"tool": "inspect_schema_diff", "metrics": {"action_masked": True}},
+                ],
+            },
+            add_column_inspect_weight=0.4,
+        )
+        self.assertTrue(valid["add_column_inspected"])
+        self.assertEqual(valid["reward_add_column_inspect"], 0.4)
+        self.assertFalse(masked["add_column_inspected"])
+        self.assertEqual(masked["reward_add_column_inspect"], 0.0)
+
+    def test_targeted_reward_penalises_missing_ask_and_add_column_protocol(self) -> None:
+        sql = "SELECT 1"
+        result = compute_score(
+            data_source="driftsql/test",
+            solution_str=_tool_trace([("submit_solution", {"sql": sql})]),
+            ground_truth="",
+            extra_info={
+                "interaction_profile": "must_ask",
+                "drift_type": "add_column",
+            },
+            missing_required_clarification_penalty=0.3,
+            add_column_protocol_penalty=0.2,
+        )
+        self.assertTrue(result["clarification_required"])
+        self.assertFalse(result["add_column_protocol_complete"])
+        self.assertEqual(result["penalty_missing_required_clarification"], 0.3)
+        self.assertEqual(result["penalty_add_column_protocol"], 0.2)
+
+    def test_decision_reward_scores_first_unmasked_action(self) -> None:
+        correct = compute_score(
+            data_source="driftsql/p6/decision/inspect_schema_diff",
+            solution_str=_tool_trace([("inspect_schema_diff", {})]),
+            ground_truth="",
+            extra_info={"decision_target_action": "inspect_schema_diff"},
+            decision_action_weight=1.0,
+            decision_action_mismatch_penalty=0.75,
+            missing_submit_penalty=0.0,
+        )
+        wrong = compute_score(
+            data_source="driftsql/p6/decision/inspect_schema_diff",
+            solution_str=_tool_trace([("execute_sql", {"sql": "SELECT 1"})]),
+            ground_truth="",
+            extra_info={"decision_target_action": "inspect_schema_diff"},
+            decision_action_weight=1.0,
+            decision_action_mismatch_penalty=0.75,
+            missing_submit_penalty=0.0,
+        )
+        self.assertTrue(correct["decision_action_correct"])
+        self.assertEqual(correct["reward_decision_action"], 1.0)
+        self.assertEqual(correct["penalty_decision_action"], 0.0)
+        self.assertFalse(wrong["decision_action_correct"])
+        self.assertEqual(wrong["reward_decision_action"], 0.0)
+        self.assertEqual(wrong["penalty_decision_action"], 0.75)
+
+    def test_masked_decision_action_cannot_earn_reward(self) -> None:
+        result = compute_score(
+            data_source="driftsql/p6/decision/ask_user",
+            solution_str=_tool_trace([("ask_user", {"question": "Which definition?"})]),
+            ground_truth="",
+            extra_info={
+                "decision_target_action": "ask_user",
+                "environment_events": [
+                    {"tool": "ask_user", "metrics": {"action_masked": True}}
+                ],
+            },
+            decision_action_weight=1.0,
+            decision_action_mismatch_penalty=0.5,
+            missing_submit_penalty=0.0,
+        )
+        self.assertEqual(result["decision_action"], "")
+        self.assertFalse(result["decision_action_correct"])
+        self.assertEqual(result["reward_decision_action"], 0.0)
+        self.assertEqual(result["penalty_decision_action"], 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from fastapi import Request
 from driftsql.service.auth import AuthSessionStore
 from driftsql.service.catalog import ExperimentCatalog, ScenarioCatalog
 from driftsql.service.inference import SessionOrchestrator
+from driftsql.service.model_catalog import ModelCatalog
 from driftsql.service.observability import OperationsService, WandbService
 from driftsql.service.replay import ReplayReviewStore
 from driftsql.service.repository import SQLiteSessionRepository
@@ -21,6 +22,10 @@ async def get_catalog(request: Request) -> ScenarioCatalog:
 
 async def get_experiment_catalog(request: Request) -> ExperimentCatalog:
     return request.app.state.experiment_catalog
+
+
+async def get_model_catalog(request: Request) -> ModelCatalog:
+    return request.app.state.model_catalog
 
 
 async def get_repository(request: Request) -> SQLiteSessionRepository:

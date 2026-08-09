@@ -1,4 +1,4 @@
-"""Sanitized experiment-comparison contracts for the Studio dashboard."""
+"""Sanitized experiment-comparison contracts for product clients."""
 
 from __future__ import annotations
 

@@ -19,6 +19,7 @@ from driftsql.service.catalog import (
 )
 from driftsql.service.inference import SessionOrchestrator
 from driftsql.service.inference.orchestrator import SessionConflictError
+from driftsql.service.model_catalog import ModelCatalog, ModelNotFoundError, ModelUnavailableError
 from driftsql.service.observability import OperationsService, WandbService
 from driftsql.service.replay import (
     ReplayCandidateNotFoundError,
@@ -29,12 +30,15 @@ from driftsql.service.repository import SessionNotFoundError, SQLiteSessionRepos
 from driftsql.service.schemas import (
     AuthLogin,
     AuthStatus,
+    DatabasePathRead,
     DatabaseRead,
     ExperimentList,
     FailureList,
     HealthRead,
-    ModelMetadata,
+    ModelActivate,
+    ModelList,
     OperationsSummary,
+    QuerySessionCreate,
     ReplayCandidateList,
     ReplayCandidateRead,
     ReplayReviewCreate,
@@ -48,11 +52,13 @@ from driftsql.service.schemas import (
     WandbRunList,
 )
 from driftsql.service.settings import ServiceSettings
+from driftsql.service.translation import TranslationUnavailableError
 
 from .dependencies import (
     get_auth_sessions,
     get_catalog,
     get_experiment_catalog,
+    get_model_catalog,
     get_operations,
     get_orchestrator,
     get_replay_reviews,
@@ -139,13 +145,57 @@ async def health(
         max_concurrent_sessions=settings.max_concurrent_sessions,
         repository="sqlite",
         timestamp=datetime.now(UTC),
-        details={"sandbox": "isolated-sqlite", "sql_policy": "read-only"},
+        details={
+            "sandbox": "isolated-sqlite",
+            "sql_policy": "read-only",
+            "translation": {
+                "enabled": settings.translation_enabled,
+                "model_id": orchestrator.translator.model_id,
+                "available": orchestrator.translator.available,
+                "loaded": orchestrator.translator.loaded,
+                "device": "cpu",
+            },
+        },
     )
 
 
-@router.get("/api/models", response_model=ModelMetadata, tags=["catalog"], summary="Loaded model identity")
-async def model(orchestrator: Annotated[SessionOrchestrator, Depends(get_orchestrator)]) -> ModelMetadata:
-    return orchestrator.backend.metadata
+@router.get("/api/models", response_model=ModelList, tags=["catalog"], summary="Registered model catalogue")
+async def models(
+    orchestrator: Annotated[SessionOrchestrator, Depends(get_orchestrator)],
+    catalog: Annotated[ModelCatalog, Depends(get_model_catalog)],
+) -> ModelList:
+    return catalog.list_models(orchestrator.backend.metadata)
+
+
+@router.post(
+    "/api/models/activate",
+    response_model=ModelList,
+    tags=["catalog"],
+    summary="Activate a registered model for new sessions",
+)
+async def activate_model(
+    body: ModelActivate,
+    orchestrator: Annotated[SessionOrchestrator, Depends(get_orchestrator)],
+    catalog: Annotated[ModelCatalog, Depends(get_model_catalog)],
+) -> ModelList:
+    if orchestrator.active_count:
+        raise HTTPException(status_code=409, detail="Cannot switch model while a Session is active")
+    try:
+        model = catalog.get(body.model_id)
+    except ModelNotFoundError as error:
+        raise HTTPException(status_code=404, detail=f"Unknown model: {body.model_id}") from error
+    except ModelUnavailableError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    try:
+        await orchestrator.backend.activate_model(
+            model_id=model.model_id,
+            base_model_path=model.base_model,
+            adapter_path=model.adapter,
+            adapter_sha256=model.adapter_sha256,
+        )
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return catalog.list_models(orchestrator.backend.metadata)
 
 
 @router.get("/api/scenarios", response_model=list[ScenarioRead], tags=["catalog"], summary="Tune-only demos")
@@ -156,6 +206,16 @@ async def scenarios(catalog: Annotated[ScenarioCatalog, Depends(get_catalog)]) -
 @router.get("/api/databases", response_model=list[DatabaseRead], tags=["catalog"], summary="Demo databases")
 async def databases(catalog: Annotated[ScenarioCatalog, Depends(get_catalog)]) -> list[DatabaseRead]:
     return catalog.list_databases()
+
+
+@router.get(
+    "/api/database-paths",
+    response_model=list[DatabasePathRead],
+    tags=["catalog"],
+    summary="Safe logical database paths for CLI context completion",
+)
+async def database_paths(catalog: Annotated[ScenarioCatalog, Depends(get_catalog)]) -> list[DatabasePathRead]:
+    return catalog.list_database_paths()
 
 
 @router.get(
@@ -286,6 +346,25 @@ async def create_session(
         return await orchestrator.create_session(body)
     except ScenarioNotFoundError as error:
         raise HTTPException(status_code=404, detail=f"Unknown scenario: {body.scenario_id}") from error
+
+
+@router.post(
+    "/api/query-sessions",
+    response_model=SessionRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["sessions"],
+    summary="Create an execution-verified free-form database query session",
+)
+async def create_query_session(
+    body: QuerySessionCreate,
+    orchestrator: Annotated[SessionOrchestrator, Depends(get_orchestrator)],
+) -> SessionRead:
+    try:
+        return await orchestrator.create_query_session(body)
+    except ScenarioNotFoundError as error:
+        raise HTTPException(status_code=404, detail=f"Unknown database: {body.db_id}") from error
+    except TranslationUnavailableError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @router.get("/api/sessions", response_model=SessionList, tags=["sessions"], summary="List sessions")

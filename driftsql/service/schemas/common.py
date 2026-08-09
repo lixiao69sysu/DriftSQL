@@ -46,6 +46,7 @@ class EventType(StrEnum):
 
 
 class ModelMetadata(StrictModel):
+    model_id: str | None = None
     backend: str
     base_model: str
     adapter: str
@@ -53,6 +54,28 @@ class ModelMetadata(StrictModel):
     frozen_candidate_sha256: str
     persistent: bool = True
     loaded: bool = False
+
+
+class ModelRead(StrictModel):
+    model_id: str
+    display_name: str
+    category: str
+    base_model: str
+    adapter: str | None = None
+    adapter_sha256: str = ""
+    available: bool
+    active: bool = False
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    notes: str = ""
+
+
+class ModelList(StrictModel):
+    models: list[ModelRead]
+    active_model_id: str | None = None
+
+
+class ModelActivate(StrictModel):
+    model_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9._-]+$")
 
 
 class InferenceBudget(StrictModel):

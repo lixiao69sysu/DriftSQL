@@ -14,6 +14,7 @@ import httpx
 from driftsql.service import create_app
 from driftsql.service.inference.backend import ScriptedModelBackend
 from driftsql.service.settings import ServiceSettings
+from driftsql.service.translation import TranslationService
 
 TERMINAL = {"completed", "failed", "cancelled", "timed_out", "budget_exhausted"}
 
@@ -30,6 +31,7 @@ def sha256(path: Path) -> str:
 async def service_client(
     tmp_path: Path,
     backend: ScriptedModelBackend,
+    translator: TranslationService | None = None,
     **settings_overrides: Any,
 ) -> AsyncIterator[tuple[Any, httpx.AsyncClient]]:
     settings = ServiceSettings(
@@ -37,9 +39,10 @@ async def service_client(
         model_backend="scripted",
         repository_path=tmp_path / "repository.sqlite",
         temporary_root=tmp_path / "sandboxes",
+        translation_enabled=False,
         **settings_overrides,
     )
-    app = create_app(settings, backend=backend)
+    app = create_app(settings, backend=backend, translator=translator)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -79,7 +82,7 @@ def test_add_column_api_executes_complete_real_tool_trajectory(tmp_path: Path) -
             assert health["status"] == "ready"
             assert health["max_concurrent_sessions"] == 2
             experiments = (await client.get("/api/experiments")).json()
-            assert experiments["selected_experiment_id"] == "stage8_sft20_tune55"
+            assert experiments["selected_experiment_id"] == "grpo-step25-seed20260810"
             assert sum(item["selected"] for item in experiments["experiments"]) == 1
 
             scenario = await first_scenario(client)

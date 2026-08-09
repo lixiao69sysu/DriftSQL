@@ -6,7 +6,10 @@ from .common import (
     EventType,
     HealthRead,
     InferenceBudget,
+    ModelActivate,
+    ModelList,
     ModelMetadata,
+    ModelRead,
     SessionStatus,
     UsageMetrics,
 )
@@ -27,11 +30,14 @@ from .observability import (
 )
 from .replay import ReplayCandidateList, ReplayCandidateRead, ReplayReviewCreate
 from .session import (
+    DatabasePathRead,
     DatabaseRead,
+    QuerySessionCreate,
     RunCreate,
     ScenarioRead,
     SessionCreate,
     SessionList,
+    SessionMode,
     SessionRead,
 )
 from .trajectory import TrajectoryRead
@@ -39,6 +45,7 @@ from .trajectory import TrajectoryRead
 __all__ = [
     "TERMINAL_STATUSES",
     "DatabaseRead",
+    "DatabasePathRead",
     "AuthLogin",
     "AuthStatus",
     "DailyMetric",
@@ -52,9 +59,13 @@ __all__ = [
     "InferenceBudget",
     "ModelEventPayload",
     "ModelMetadata",
+    "ModelActivate",
+    "ModelList",
+    "ModelRead",
     "ModelDeployment",
     "OperationsSummary",
     "RunCreate",
+    "QuerySessionCreate",
     "ReplayCandidateList",
     "ReplayCandidateRead",
     "ReplayReviewCreate",
@@ -62,6 +73,7 @@ __all__ = [
     "SessionCreate",
     "SessionList",
     "SessionRead",
+    "SessionMode",
     "SessionStatus",
     "ToolEventPayload",
     "TrajectoryEvent",

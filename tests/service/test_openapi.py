@@ -20,6 +20,8 @@ def test_openapi_describes_all_product_interfaces(tmp_path: Path) -> None:
         "/auth/login",
         "/auth/logout",
         "/api/models",
+        "/api/models/activate",
+        "/api/query-sessions",
         "/api/observability/failures",
         "/api/observability/summary",
         "/api/observability/wandb/runs",
@@ -28,6 +30,7 @@ def test_openapi_describes_all_product_interfaces(tmp_path: Path) -> None:
         "/api/replay/candidates/{candidate_id}/reviews",
         "/api/scenarios",
         "/api/databases",
+        "/api/database-paths",
         "/api/experiments",
         "/api/sessions",
         "/api/sessions/{session_id}",
@@ -40,6 +43,7 @@ def test_openapi_describes_all_product_interfaces(tmp_path: Path) -> None:
     components = schema["components"]["schemas"]
     for contract in (
         "ExperimentList",
+        "DatabasePathRead",
         "AuthLogin",
         "AuthStatus",
         "FailureList",

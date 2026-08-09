@@ -30,7 +30,7 @@ driftsql/               Core package
 configs/                Data, reward, and training configuration
 scripts/                Bootstrap and experiment entry points
 tests/                  Unit and integration tests
-frontend/               DriftSQL Studio React/TypeScript dashboard (P3)
+driftsql/cli/            Full-screen database TUI, classic CLI, and SSE client
 third_party/            Pinned upstream frameworks (gitignored)
 ```
 
@@ -46,6 +46,87 @@ third_party/            Pinned upstream frameworks (gitignored)
 
 Agent Lightning is intentionally not part of the main runtime. Keeping one
 agent loop prevents train/serve skew.
+
+## Interactive terminal workbench
+
+The product surface is a Hermes-style full-screen terminal workbench backed by
+the existing FastAPI/SSE service. It has searchable model/database/session
+pickers, a persistent Agent transcript, live tool cards, and always-visible
+budget, Reward, and SQL-safety state. It keeps the trained DriftSQL Agent loop,
+result-contract controller, isolated read-only SQLite sessions, replay, and W&B
+observability instead of delegating database decisions to a generic outer
+agent.
+
+Start the persistent vLLM service on GPUs 0 and 2:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,2 \
+DRIFTSQL_SERVICE_TENSOR_PARALLEL_SIZE=2 \
+DRIFTSQL_SERVICE_PORT=8001 \
+bash scripts/serve_service.sh
+```
+
+Open the TUI from another terminal:
+
+```bash
+bash scripts/run_cli.sh
+```
+
+The TUI uses the terminal alternate screen and supports mouse interaction.
+Useful shortcuts are `Ctrl+M` for models, `Ctrl+D` for databases, `Ctrl+K` for
+sessions, `Ctrl+P`/`F1` for the command panel, and `Ctrl+C` to cancel the active
+run. Use `Up`/`Down` to move through persistent input history and return to the
+current unsent draft. Type `@` anywhere in the composer to search safe logical database paths at
+database, table, or column granularity; `Tab` or `Enter` inserts the selected
+path and switches to its database. The previous scrolling interface remains available for logs, pipes, or
+very small terminals:
+
+```bash
+bash scripts/run_cli.sh --classic
+```
+
+Plain text is treated as a free-form instruction for the selected database.
+Free queries are execution- and safety-verified, but are explicitly marked as
+having no hidden semantic oracle. Verified drift-recovery evaluation remains
+available through `/recover <scenario_id>`.
+
+Chinese instructions are translated server-side by the pinned
+`Qwen2.5-0.5B-Instruct` language adapter before they enter the English-trained
+Agent. The adapter runs lazily on CPU and preserves `@schema` paths, SQL, code
+spans, identifiers, numbers, and DriftSQL domain terms through protected
+placeholders. The original Chinese and generated English are both retained in
+the Session trajectory; the CLI displays the English Agent input before the
+first model turn. Install and download it once with:
+
+```bash
+.venv/bin/pip install -e '.[service,translation]'
+.venv/bin/python scripts/download_translation_model.py
+```
+
+Set `DRIFTSQL_SERVICE_TRANSLATION_ENABLED=false` only when an English-only
+deployment is desired. If translation is enabled but the pinned local model is
+missing or cannot preserve protected tokens, the API rejects the request
+instead of silently passing Chinese into the Agent.
+
+```text
+@database/table/column      search and insert a logical Schema reference
+/db                         list databases
+/db <db_id>                 select a database
+/models                     list Base/SFT/GRPO checkpoints
+/models info <model_id>     inspect provenance and Tune metrics
+/models use <model_id>      activate a registered model for new Sessions
+/recover <scenario_id>      run a result-contract recovery task
+/budget key=value           configure turn/tool/token/timeout budgets
+/sessions                   list durable Session history
+/trace [session_id]         replay model/tool events
+/reward [session_id]        inspect Reward decomposition
+/experiments                compare frozen evaluation results
+/ops                        inspect persisted operational metrics
+/failures [type]            inspect classified failures
+/wandb [run_id]             inspect W&B runs and metric series
+/replay                     list or review replay candidates
+/help                       open the searchable command reference
+```
 
 ## Local MVP
 
@@ -70,7 +151,7 @@ python -m unittest discover -s tests -v
 For the full development environment:
 
 ```bash
-export DRIFTSQL_BASE_PYTHON=/data/yjz/anaconda_tmp/envs/lcpy311/bin/python
+export DRIFTSQL_BASE_PYTHON=python3.11
 scripts/bootstrap_env.sh
 .venv/bin/python scripts/check_environment.py
 ```
@@ -79,24 +160,17 @@ scripts/bootstrap_env.sh
 Ray, Transformers, PEFT, and Datasets. The bootstrap script creates a local
 venv with system packages visible, then installs only the pinned training
 overlay and editable DriftSQL-RL/VERL sources. It never modifies the base
-environment. On this machine, `.venv/bin/python` resolves to the `lcpy311`
-Python 3.11 interpreter; the local overlay is necessary because `lcpy311`
-retains Pydantic 1 for AppWorld while current VERL needs Pydantic 2.
+environment. Set it to an absolute interpreter path when `python3.11` is not
+the desired CUDA environment. The local overlay keeps DriftSQL's pinned Python
+packages separate from other projects that may require incompatible versions.
 
 The upstream framework revisions are recorded in `frameworks.lock`.
 
 The default base model is pinned in `models.lock.json` and downloaded locally:
 
 ```bash
-/data/yjz/anaconda_tmp/envs/lcpy311/bin/python scripts/bootstrap_model.py
+.venv/bin/python scripts/bootstrap_model.py
 export DRIFTSQL_MODEL_PATH="$PWD/models/Qwen2.5-Coder-7B-Instruct"
-```
-
-The resource-scaled GRPO smoke model is pinned separately and does not replace
-the 7B comparison model:
-
-```bash
-.venv/bin/python scripts/bootstrap_model.py --model-key smoke_model_3b
 ```
 
 ## Data
@@ -162,8 +236,8 @@ The public 300-task/26-database Mini-Interact adapter, real-asset environment
 smoke, four-rollout VERL lifecycle smoke, security checks, and full test suite
 all pass. This completes the Stage 2 engineering environment; it does not
 create an official Mini-Interact score because all public labels and test cases
-are empty. See
-[`docs/experiments/stage2_interactive_environment_20260727.md`](docs/experiments/stage2_interactive_environment_20260727.md).
+are empty. The retained environment conclusions are summarized in
+[`docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md`](docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md).
 
 ```bash
 .venv/bin/python scripts/prepare_interactive_eval.py
@@ -171,43 +245,15 @@ env TMPDIR="$PWD/data/tmp" DRIFTSQL_TMPDIR="$PWD/data/tmp" \
   .venv/bin/python scripts/smoke_interactive_environment.py
 ```
 
-## Stage 3 two-stage SFT
+## Historical SFT exploration
 
-The formal Reasoning SFT builder retains 6,596 of 6,601 BIRD23 training rows
-after real read-only SQLite execution. The database-grouped split contains
-5,143 training rows over 55 databases and 1,453 validation rows over 14
-disjoint databases. Targets are deterministic AST-derived relational plans
-plus Gold SQL, rather than unverified free-form reasoning.
-
-Formal Qwen2.5-Coder-3B LoRA/FSDP training saved step 40 and step 80. On the
-fixed 128-task/14-database gate, selected step 40 improves direct SQL EX from
-`39.8%` to `53.1%` and executable rate from `74.2%` to `78.1%` (31 paired
-gains, 14 losses, exact McNemar `p=0.0161`).
-
-The second SFT stage contains 396 execution-verified six-action trajectories,
-expanded into 1,908 train and 468 validation next-action examples with zero
-database overlap. Its selected step-80 adapter uses structured tool history
-and one parser-compatible JSON target per turn. On the unified 78-task
-interactive evaluation it reaches `24/78 = 30.8%` task success and `43/78 =
-55.1%` executable submissions, versus `1/78 = 1.3%` for Base. Invalid tool
-output falls from 72 tasks to 2. See the full data, failure analysis, and
-reproduction record in
-[`docs/experiments/stage3_complete_20260727.md`](docs/experiments/stage3_complete_20260727.md).
-
-```bash
-env TMPDIR="$PWD/data/tmp" .venv/bin/python scripts/prepare_reasoning_sft.py
-CUDA_VISIBLE_DEVICES=0,3 bash scripts/train_3b_reasoning_sft_formal.sh
-env TMPDIR="$PWD/data/tmp" .venv/bin/python \
-  scripts/prepare_five_tool_sft.py \
-  --output-dir data/processed/five_tool_sft_native_v2
-CUDA_VISIBLE_DEVICES=0,3 bash scripts/train_3b_five_tool_sft_semantic.sh
-env TMPDIR="$PWD/data/tmp" .venv/bin/python \
-  scripts/expand_five_tool_sft_next_actions.py \
-  --input-dir data/processed/five_tool_sft_native_v2 \
-  --output-dir data/processed/five_tool_sft_native_v4_json \
-  --plain-json-targets
-CUDA_VISIBLE_DEVICES=0,3 bash scripts/train_3b_five_tool_sft.sh
-```
+The early 3B Reasoning-SFT and Tool-SFT experiments established that
+execution-verified targets and structured tool history were necessary, but
+their checkpoints and one-off launchers have been superseded by the current
+7B Recovery SFT pipeline. Their measured conclusions and failure analysis are
+preserved in
+[`docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md`](docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md),
+while the active scripts directory contains only the current training path.
 
 ## Drift trajectory factory
 
@@ -267,31 +313,16 @@ database-disjoint, while the existing 78-task evaluation remains frozen inside
 the new test split. Composition, leakage policy, and exact build commands are
 documented in [`docs/dataset_v2.md`](docs/dataset_v2.md).
 
-## Tool SFT and GRPO pipeline
+## Current 7B Agentic SFT and GRPO pipeline
 
-Convert the validated manifests into VERL-native datasets:
+The maintained path builds the Scale-up protocol, mines real on-policy
+failures, creates Recovery SFT and Hard Replay data, trains SFT160, and then
+optimizes the corrected-observation policy with episode-level GRPO. The
+canonical entry points and their dependencies are indexed in
+[`scripts/README.md`](scripts/README.md).
 
-```bash
-.venv/bin/python scripts/prepare_training_data.py
-.venv/bin/python scripts/smoke_agentic_pipeline.py
-```
-
-The column-rename smoke split contains 74 train and 26 validation episodes.
-The formal multi-drift split contains 322 train and 78 validation episodes
-over 46 and 11 databases respectively, with zero database overlap. Each RL row carries tool initialization parameters,
-schema-diff metadata, and the expected result fingerprint. The smoke pipeline
-loads VERL's real tool registry, materializes v2, observes the stale query
-failure, verifies the repair, and gives the successful trajectory reward
-`1.10` versus `0.00` for the stale solution.
-
-Run the short oracle SFT:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/train_sft_smoke.sh
-```
-
-The script now stores BF16 LoRA-only shards by default. To export a standard
-PEFT adapter from an older HF checkpoint:
+The generic SFT and GRPO launchers store BF16 LoRA-only shards. Export a
+portable PEFT adapter with:
 
 ```bash
 .venv/bin/python scripts/export_lora_adapter.py \
@@ -300,53 +331,37 @@ PEFT adapter from an older HF checkpoint:
   --base-model models/Qwen2.5-Coder-7B-Instruct
 ```
 
-Warm-start the one-step GRPO integration run from SFT:
+Train the maintained SFT160 and corrected-observation GRPO stages on four
+GPUs with:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 \
-LORA_ADAPTER_PATH="$PWD/checkpoints/EXPERIMENT/global_step_N/lora_adapter" \
-bash scripts/train_grpo_smoke.sh
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/train_7b_p6_scaleup_sft.sh
+ARM=B SEED=20260810 \
+OUTPUT_DIR="$PWD/checkpoints/p6_contract_observation_grpo_arm_c_7b" \
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/train_7b_p6_first_action_grpo.sh
 ```
 
-The GRPO script uses the local base model, async vLLM multi-turn rollout,
-DriftSQL's terminal submit agent loop, live version/schema/SQL tools,
-execution-based reward, and LoRA-only checkpoints. The first completed SFT
-smoke and its resource measurements are recorded in
-`docs/experiments/sft_smoke_20260726.md`.
-
-The formal 3B Agentic GRPO tuning is now complete.  On the locked 78-task
-execution set, the deployable GRPO policy plus conservative terminal controller
-scores 28/78 versus Tool-SFT's 24/78, reduces turn limits from 23 to 16
-(`30.4%`), and keeps unsafe tasks at zero.  The controller only submits SQL
-that already passed the read-only `execute_sql` sandbox.  Pure-policy and fresh
-generation results, including failed tuning runs and vLLM reproducibility
-caveats, are separated in
-`docs/experiments/stage4_complete_20260729.md`.
-
-The formal two-GPU 7B run is reproducible with:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,3 bash scripts/train_7b_schema_sft.sh
-.venv/bin/python -m verl.model_merger merge --backend fsdp \
-  --local_dir checkpoints/sft_schema_drift_7b/global_step_80 \
-  --target_dir checkpoints/sft_schema_drift_7b/global_step_80/merged
-CUDA_VISIBLE_DEVICES=0,3 bash scripts/train_7b_schema_grpo.sh
-```
-
-See `docs/experiments/schema_drift_7b_20260726.md` for measured results and
-the distinction between training-rollout reward and held-out evaluation.
+Both stages use the local Qwen2.5-Coder-7B base model, VERL multi-turn rollout,
+the seven-tool DriftSQL environment, execution-based Reward V3, dynamic tool
+masks and LoRA-only checkpoints. See the experiment retrospective for the
+measured Base/SFT/GRPO comparison and the distinction between training reward
+and held-out Tune432 behavior.
 
 ## Milestone sequence
 
 1. **Complete:** create the project skeleton and pin dependencies.
-2. **Complete:** reproduce resource-scaled BIRD-RL single- and multi-turn
-   training.
+2. **Historical framework-validation milestone:** resource-scaled BIRD-RL
+   single- and multi-turn training was reproduced during bring-up. Its
+   one-off Smoke launchers were removed after the maintained seven-tool P6
+   training path replaced them; the pinned upstream framework and DriftSQL
+   integration remain.
 3. **Public path complete:** run BIRD-Interact Mini's public environment;
    official SR is unavailable because the release omits Gold SQL and tests.
 4. **Complete:** generate deterministic, execution-verified column renames.
 5. **Complete:** connect `inspect_schema_diff`, SQL execution, and reward.
-6. **Complete:** run the 3B SFT warm-start and one-step multi-turn GRPO smoke.
-   See `docs/experiments/grpo_3b_smoke_20260726.md`.
+6. **Historical:** the 3B SFT/GRPO smoke established the initial integration;
+   its conclusions remain in the retrospective, while its superseded local
+   launchers and weights have been removed.
 7. **Complete:** formal 3B Reasoning SFT and five-tool next-action SFT with
    unified held-out execution evaluation.
 8. **Complete:** formal 3B five-tool Agentic GRPO tuning, conservative terminal
@@ -356,20 +371,20 @@ the distinction between training-rollout reward and held-out evaluation.
    interaction profiles; and 5,060 next-action SFT examples. Metric-definition
    drift now has an execution-verified factory and uses the same isolated
    reward path; expanding it into a formal dataset split remains P5 follow-up.
-10. Add failure mining and replay.
-11. Add clean/drift/cost/safety regression gates.
-12. **Product P0-P3 complete:** FastAPI contracts, persistent frozen SFT20
-    vLLM backend, bounded Session queue, event streaming, isolated read-only
-    SQLite sandboxes, durable trajectory storage, and the DriftSQL Studio Web
-    Dashboard. See `docs/product_service_p0_p2.md` and
-    `docs/product_service_p3.md`.
+10. **Complete:** mine real on-policy failures and build Recovery SFT plus Hard
+    Replay data.
+11. **Complete:** enforce clean/drift/cost/safety regression gates on Tune432.
+12. **Product P0-P3 complete:** FastAPI contracts, persistent vLLM backend,
+    bounded Session queue, event streaming, isolated read-only SQLite
+    sandboxes, durable trajectory storage, and the DriftSQL interactive CLI.
+    See `docs/product_service_p0_p2.md`.
 13. **Product P4 complete:** persisted run KPIs, drift-stratified metrics,
     daily trends, failure classification and trajectory replay, deployment
-    provenance, and optional server-side W&B run discovery. See
-    `docs/product_service_p4.md`.
-14. **P5 completed as a negative promotion result:** human-reviewed replay,
+    provenance, and optional server-side W&B run discovery.
+14. **Historical P5 negative result:** human-reviewed replay,
     database-isolated Train/Tune/Gate, 10-step 7B GRPO, deterministic Tune
     selection, and the permanently sealed one-shot Gate all ran. GRPO did not
     beat SFT20, and the frozen SFT20 candidate failed the precommitted Gate;
-    no Gate result is reused for tuning. See
-    `docs/experiments/p5_reviewed_replay_20260801.md`.
+    no Gate result is reused for tuning. Its one-off scripts and reports have
+    been removed after consolidation. See
+    `docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md`.

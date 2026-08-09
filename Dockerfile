@@ -2,30 +2,22 @@
 
 ARG VLLM_IMAGE=vllm/vllm-openai:v0.15.1
 
-FROM node:20-bookworm-slim AS frontend-build
-WORKDIR /build/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
-
 FROM ${VLLM_IMAGE} AS runtime
 ENTRYPOINT []
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY driftsql/ ./driftsql/
-RUN python -m pip install --no-cache-dir ".[service]"
+RUN python -m pip install --no-cache-dir ".[service,translation]"
 
 COPY configs/ ./configs/
 COPY scripts/serve_service.sh ./scripts/serve_service.sh
-COPY --from=frontend-build /build/frontend/dist ./frontend/dist
 
 ENV PYTHONUNBUFFERED=1 \
+    DRIFTSQL_PORTABLE_TOOL_RUNTIME=1 \
     DRIFTSQL_SERVICE_ENVIRONMENT=production \
     DRIFTSQL_SERVICE_HOST=0.0.0.0 \
-    DRIFTSQL_SERVICE_PORT=8000 \
-    DRIFTSQL_SERVICE_SERVE_FRONTEND=true
+    DRIFTSQL_SERVICE_PORT=8000
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \

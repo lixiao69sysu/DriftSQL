@@ -68,6 +68,16 @@ class ModelBackend(ABC):
     @abstractmethod
     async def abort(self, session_id: str) -> None: ...
 
+    @abstractmethod
+    async def activate_model(
+        self,
+        *,
+        model_id: str,
+        base_model_path: Path,
+        adapter_path: Path | None,
+        adapter_sha256: str,
+    ) -> None: ...
+
     @property
     @abstractmethod
     def metadata(self) -> ModelMetadata: ...
@@ -83,6 +93,7 @@ class VLLMBackend(ModelBackend):
         self._lora_request: Any = None
         self._request_ids: dict[str, set[str]] = {}
         self._metadata = ModelMetadata(
+            model_id=settings.default_model_id,
             backend="vllm",
             base_model=str(settings.base_model_path),
             adapter=str(settings.adapter_path),
@@ -91,33 +102,23 @@ class VLLMBackend(ModelBackend):
             loaded=False,
         )
 
-    def _verify_frozen_candidate(self) -> None:
+    def _verify_initial_model(self) -> None:
         settings = self.settings
         if not settings.base_model_path.is_dir():
             raise FileNotFoundError(settings.base_model_path)
         if not settings.adapter_path.is_dir():
             raise FileNotFoundError(settings.adapter_path)
-        manifest = json.loads(settings.frozen_candidate_path.read_text(encoding="utf-8"))
-        declared = manifest.get("candidate", {}).get("adapter_files_sha256", {})
-        for relative, expected in declared.items():
-            candidate = settings.frozen_candidate_path.parents[3] / str(relative)
-            # Paths in the frozen manifest are project relative.
-            if not candidate.is_file():
-                candidate = settings.adapter_path / Path(str(relative)).name
-            actual = _sha256(candidate)
-            if actual != expected:
-                raise RuntimeError(f"Frozen adapter hash mismatch: {candidate}")
         self._metadata = self._metadata.model_copy(
             update={
                 "adapter_sha256": _adapter_sha256(settings.adapter_path),
-                "frozen_candidate_sha256": _sha256(settings.frozen_candidate_path),
+                "frozen_candidate_sha256": "",
             }
         )
 
     async def start(self) -> None:
         if self._engine is not None:
             return
-        self._verify_frozen_candidate()
+        self._verify_initial_model()
         # The service imports the VERL/torch tool stack before lifespan. vLLM
         # tensor-parallel workers must therefore use spawn; CUDA cannot be
         # re-initialized safely in a forked child.
@@ -147,7 +148,7 @@ class VLLMBackend(ModelBackend):
             trust_remote_code=True,
         )
         self._engine = AsyncLLMEngine.from_engine_args(engine_args)
-        self._lora_request = LoRARequest("stage8-sft20", 1, str(self.settings.adapter_path))
+        self._lora_request = LoRARequest(self.settings.default_model_id, 1, str(self.settings.adapter_path))
         await self._engine.add_lora(self._lora_request)
         await self._engine.pin_lora(1)
         self._metadata = self._metadata.model_copy(update={"loaded": True})
@@ -209,6 +210,49 @@ class VLLMBackend(ModelBackend):
             return_exceptions=True,
         )
 
+    async def activate_model(
+        self,
+        *,
+        model_id: str,
+        base_model_path: Path,
+        adapter_path: Path | None,
+        adapter_sha256: str,
+    ) -> None:
+        from vllm.lora.request import LoRARequest
+
+        if self._engine is None:
+            raise RuntimeError("vLLM backend has not been started")
+        if base_model_path.resolve() != self.settings.base_model_path.resolve():
+            raise ValueError("Hot activation only supports adapters for the loaded base model")
+        old_request = self._lora_request
+        old_metadata = self._metadata
+        if old_request is not None:
+            await self._engine.remove_lora(old_request.lora_int_id)
+        try:
+            if adapter_path is None:
+                next_request = None
+            else:
+                next_request = LoRARequest(model_id, 1, str(adapter_path))
+                await self._engine.add_lora(next_request)
+                await self._engine.pin_lora(1)
+            self._lora_request = next_request
+            self._metadata = self._metadata.model_copy(
+                update={
+                    "model_id": model_id,
+                    "base_model": str(base_model_path),
+                    "adapter": str(adapter_path) if adapter_path else "",
+                    "adapter_sha256": adapter_sha256,
+                    "frozen_candidate_sha256": "",
+                }
+            )
+        except Exception:
+            if old_request is not None:
+                await self._engine.add_lora(old_request)
+                await self._engine.pin_lora(old_request.lora_int_id)
+            self._lora_request = old_request
+            self._metadata = old_metadata
+            raise
+
     @property
     def metadata(self) -> ModelMetadata:
         return self._metadata
@@ -229,6 +273,7 @@ class ScriptedModelBackend(ModelBackend):
         self.active_generations = 0
         self.max_active_generations = 0
         self._metadata = ModelMetadata(
+            model_id="stage8-sft20-legacy",
             backend="scripted",
             base_model="Qwen2.5-Coder-7B-Instruct-test-double",
             adapter="stage8-sft20-test-double",
@@ -246,6 +291,14 @@ class ScriptedModelBackend(ModelBackend):
     def _default_call(self, request: GenerationRequest) -> dict[str, Any]:
         index = len(request.tool_events)
         ground_truth = str(request.create_kwargs.get("ground_truth", ""))
+        if request.create_kwargs.get("verification_mode") == "execution_only":
+            ground_truth = "SELECT 1 AS result"
+            query_calls = [
+                {"name": "get_schema", "arguments": {"query": ""}},
+                {"name": "execute_sql", "arguments": {"sql": ground_truth}},
+                {"name": "submit_solution", "arguments": {"sql": ground_truth}},
+            ]
+            return query_calls[min(index, len(query_calls) - 1)]
         calls = [
             {"name": "get_schema_version", "arguments": {}},
             {"name": "inspect_schema_diff", "arguments": {}},
@@ -280,6 +333,24 @@ class ScriptedModelBackend(ModelBackend):
 
     async def abort(self, session_id: str) -> None:
         self._cancelled.add(session_id)
+
+    async def activate_model(
+        self,
+        *,
+        model_id: str,
+        base_model_path: Path,
+        adapter_path: Path | None,
+        adapter_sha256: str,
+    ) -> None:
+        self._metadata = self._metadata.model_copy(
+            update={
+                "model_id": model_id,
+                "base_model": str(base_model_path),
+                "adapter": str(adapter_path) if adapter_path else "",
+                "adapter_sha256": adapter_sha256,
+                "frozen_candidate_sha256": "",
+            }
+        )
 
     @property
     def metadata(self) -> ModelMetadata:

@@ -20,13 +20,16 @@ from driftsql.service.schemas import (
     TERMINAL_STATUSES,
     EventType,
     InferenceBudget,
+    QuerySessionCreate,
     RunCreate,
     SessionCreate,
+    SessionMode,
     SessionRead,
     SessionStatus,
     TrajectoryEvent,
 )
 from driftsql.service.settings import ServiceSettings
+from driftsql.service.translation import TranslationService
 from driftsql.tool_calls import find_tool_calls, remove_tool_call_payloads
 
 from .backend import GenerationRequest, ModelBackend
@@ -51,6 +54,8 @@ class ActiveSession:
     create_kwargs: dict[str, Any]
     tool_names: list[str]
     messages: list[dict[str, Any]]
+    mode: SessionMode = SessionMode.recovery
+    reward_extra_info: dict[str, Any] = field(default_factory=dict)
     tool_events: list[dict[str, Any]] = field(default_factory=list)
     model_outputs: list[str] = field(default_factory=list)
     cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
@@ -71,12 +76,14 @@ class SessionOrchestrator:
         catalog: ScenarioCatalog,
         backend: ModelBackend,
         tools: ToolRuntime,
+        translator: TranslationService,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.catalog = catalog
         self.backend = backend
         self.tools = tools
+        self.translator = translator
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_sessions)
         self._active: dict[str, ActiveSession] = {}
         self._conditions: dict[str, asyncio.Condition] = {}
@@ -111,6 +118,7 @@ class SessionOrchestrator:
             scenario_id=request.scenario_id,
             db_id=scenario.db_id,
             db_version=str(create_kwargs.get("db_version", "unknown")),
+            mode=SessionMode.recovery,
             status=SessionStatus.created,
             question=request.question or scenario.question,
             stale_sql=scenario.stale_sql,
@@ -135,6 +143,8 @@ class SessionOrchestrator:
             create_kwargs=create_kwargs,
             tool_names=tool_names,
             messages=self.catalog.prompt(request.scenario_id, question=request.question),
+            mode=SessionMode.recovery,
+            reward_extra_info=self.catalog.reward_extra_info(request.scenario_id),
         )
         self._conditions[session_id] = asyncio.Condition()
         await self._emit(
@@ -145,6 +155,109 @@ class SessionOrchestrator:
                 "scenario_id": session.scenario_id,
                 "db_id": session.db_id,
                 "db_version": session.db_version,
+                "sandbox_ref": session.sandbox_ref,
+                "model": session.model.model_dump(mode="json"),
+            },
+        )
+        return session
+
+    async def create_query_session(self, request: QuerySessionCreate) -> SessionRead:
+        translation = await self.translator.translate(request.question, request.locale)
+        translated_question = translation.translated_text
+        agent_question = self.catalog.resolve_query_references(request.db_id, translated_question)
+        source_scenario_id, create_kwargs, tool_names = self.catalog.query_environment(request.db_id)
+        create_kwargs["query"] = agent_question
+        create_kwargs["original_query"] = request.question
+        if self.backend.metadata.backend == "scripted":
+            create_kwargs["sync_io"] = True
+        source_db = Path(str(create_kwargs["source_db"])).resolve()
+        if not source_db.is_file():
+            raise FileNotFoundError(source_db)
+        session_id = str(uuid4())
+        sandbox = await self.tools.initialize_session(session_id, tool_names, create_kwargs)
+        if not sandbox["sandbox_isolated"]:
+            await self.tools.release_session(session_id)
+            raise RuntimeError("Sandbox tool did not create an isolated database session")
+        now = utcnow()
+        scenario_id = f"query:{source_scenario_id}:{session_id}"
+        labels = {
+            **request.labels,
+            "mode": "query",
+            "locale": request.locale,
+            "agent_locale": translation.target_locale if translation.applied else request.locale,
+            "translation_applied": str(translation.applied).lower(),
+            "translation_model": translation.model_id,
+        }
+        session = SessionRead(
+            session_id=session_id,
+            scenario_id=scenario_id,
+            db_id=request.db_id,
+            db_version=str(create_kwargs.get("db_version", "unknown")),
+            mode=SessionMode.query,
+            status=SessionStatus.created,
+            question=request.question,
+            stale_sql="",
+            drift_type="free_query",
+            created_at=now,
+            updated_at=now,
+            sandbox_isolated=True,
+            sandbox_ref=f"sandbox:{session_id}",
+            source_db_sha256=file_sha256(source_db),
+            model=self.backend.metadata,
+            labels=labels,
+            result={
+                "database_session": "isolated-copy",
+                "sandbox_engine": "sqlite",
+                "verification_scope": "execution_only",
+                "semantic_verified": False,
+                "translation": {
+                    "applied": translation.applied,
+                    "model_id": translation.model_id,
+                    "source_locale": translation.source_locale,
+                    "target_locale": translation.target_locale,
+                    "translated_question": translated_question if translation.applied else None,
+                    "agent_question": agent_question,
+                    "elapsed_ms": translation.elapsed_ms,
+                },
+            },
+        )
+        try:
+            self.repository.create_session(session)
+        except Exception:
+            await self.tools.release_session(session_id)
+            raise
+        self._active[session_id] = ActiveSession(
+            scenario_id=scenario_id,
+            create_kwargs=create_kwargs,
+            tool_names=tool_names,
+            messages=self.catalog.query_prompt(
+                request.db_id,
+                agent_question,
+                translation.target_locale if translation.applied else request.locale,
+            ),
+            mode=SessionMode.query,
+        )
+        self._conditions[session_id] = asyncio.Condition()
+        await self._emit(
+            session_id,
+            EventType.session,
+            {
+                "status": session.status.value,
+                "scenario_id": scenario_id,
+                "db_id": session.db_id,
+                "db_version": session.db_version,
+                "mode": session.mode.value,
+                "verification_scope": "execution_only",
+                "input_translation": {
+                    "applied": translation.applied,
+                    "model_id": translation.model_id,
+                    "source_locale": translation.source_locale,
+                    "target_locale": translation.target_locale,
+                    "original": request.question,
+                    "translated": translated_question,
+                    "agent_input": agent_question,
+                    "elapsed_ms": translation.elapsed_ms,
+                },
                 "sandbox_ref": session.sandbox_ref,
                 "model": session.model.model_dump(mode="json"),
             },
@@ -353,33 +466,36 @@ class SessionOrchestrator:
             return
         try:
             session = self.repository.get_session(session_id)
-            reward_extra = self.catalog.reward_extra_info(active.scenario_id)
-            reward_extra.update(
-                {
-                    "environment_events": active.tool_events,
-                    "response_tokens": session.usage.response_tokens,
-                    "trajectory_timed_out": terminal is SessionStatus.timed_out,
-                    "trajectory_turn_limit": reason == "max_turns",
-                }
-            )
-            reward_args = (
-                "driftsql_service",
-                "\n".join(active.model_outputs),
-                None,
-                reward_extra,
-            )
-            try:
-                if self.backend.metadata.backend == "scripted":
-                    reward = compute_score(*reward_args)
-                else:
-                    reward = await asyncio.to_thread(compute_score, *reward_args)
-            except Exception as reward_error:  # noqa: BLE001 - preserve terminal state.
-                reward = {
-                    "score": 0.0,
-                    "task_success": False,
-                    "unsafe": False,
-                    "error": f"reward_error: {reward_error!r}",
-                }
+            if active.mode is SessionMode.query:
+                reward = self._query_reward(active.tool_events)
+            else:
+                reward_extra = dict(active.reward_extra_info)
+                reward_extra.update(
+                    {
+                        "environment_events": active.tool_events,
+                        "response_tokens": session.usage.response_tokens,
+                        "trajectory_timed_out": terminal is SessionStatus.timed_out,
+                        "trajectory_turn_limit": reason == "max_turns",
+                    }
+                )
+                reward_args = (
+                    "driftsql_service",
+                    "\n".join(active.model_outputs),
+                    None,
+                    reward_extra,
+                )
+                try:
+                    if self.backend.metadata.backend == "scripted":
+                        reward = compute_score(*reward_args)
+                    else:
+                        reward = await asyncio.to_thread(compute_score, *reward_args)
+                except Exception as reward_error:  # noqa: BLE001 - preserve terminal state.
+                    reward = {
+                        "score": 0.0,
+                        "task_success": False,
+                        "unsafe": False,
+                        "error": f"reward_error: {reward_error!r}",
+                    }
             elapsed_ms = (time.perf_counter() - started) * 1000
             usage = session.usage.model_copy(update={"elapsed_ms": elapsed_ms})
             result = dict(session.result)
@@ -387,9 +503,15 @@ class SessionOrchestrator:
                 {
                     "reward": reward.get("score"),
                     "task_success": bool(reward.get("task_success")),
+                    "query_completed": bool(reward.get("query_completed")),
+                    "semantic_verified": bool(reward.get("semantic_verified")),
                     "unsafe": bool(reward.get("unsafe")),
                 }
             )
+            if active.mode is SessionMode.query:
+                execution_result = self._latest_query_execution_result(active.tool_events)
+                if execution_result is not None:
+                    result["execution_result"] = execution_result
             if error_detail:
                 result["error"] = error_detail
             session = self.repository.save_session(
@@ -398,7 +520,11 @@ class SessionOrchestrator:
                         "status": terminal,
                         "termination_reason": reason,
                         "completed_at": utcnow(),
-                        "success": bool(reward.get("task_success")),
+                        "success": bool(
+                            reward.get("query_completed")
+                            if active.mode is SessionMode.query
+                            else reward.get("task_success")
+                        ),
                         "usage": usage,
                         "result": result,
                     }
@@ -419,6 +545,59 @@ class SessionOrchestrator:
             await self.tools.release_session(session_id)
             self._active.pop(session_id, None)
             self._conditions.pop(session_id, None)
+
+    @staticmethod
+    def _query_reward(events: list[dict[str, Any]]) -> dict[str, Any]:
+        executions = [event for event in events if event.get("tool") == "execute_sql"]
+        submissions = [event for event in events if event.get("tool") == "submit_solution"]
+        last_execution = executions[-1] if executions else {}
+        last_submission = submissions[-1] if submissions else {}
+        execution_success = bool(last_execution.get("metrics", {}).get("execution_success"))
+        submitted = bool(last_submission.get("metrics", {}).get("submitted"))
+        executed_sql = str(last_execution.get("arguments", {}).get("sql", "")).strip().rstrip(";").casefold()
+        submitted_sql = str(last_submission.get("arguments", {}).get("sql", "")).strip().rstrip(";").casefold()
+        exact_safe_submit = bool(execution_success and submitted and executed_sql and executed_sql == submitted_sql)
+        unsafe_prefixes = ("insert ", "update ", "delete ", "create ", "drop ", "alter ", "attach ", "detach ")
+        unsafe = any(
+            str(event.get("arguments", {}).get("sql", "")).lstrip().casefold().startswith(unsafe_prefixes)
+            for event in executions
+        )
+        return {
+            "score": 1.0 if exact_safe_submit and not unsafe else 0.0,
+            "task_success": False,
+            "query_completed": exact_safe_submit and not unsafe,
+            "execution_success": execution_success,
+            "safe_submit": exact_safe_submit,
+            "semantic_verified": False,
+            "verification_scope": "execution_only",
+            "unsafe": unsafe,
+        }
+
+    @staticmethod
+    def _latest_query_execution_result(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for event in reversed(events):
+            if event.get("tool") != "execute_sql":
+                continue
+            if not bool(event.get("metrics", {}).get("execution_success")):
+                continue
+            try:
+                observation = json.loads(str(event.get("response", "")))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(observation, dict) or not observation.get("success"):
+                continue
+            columns = observation.get("columns", [])
+            rows = observation.get("rows", [])
+            if not isinstance(columns, list) or not isinstance(rows, list):
+                continue
+            return {
+                "columns": columns,
+                "rows": rows,
+                "returned_rows": len(rows),
+                "truncated": bool(observation.get("truncated")),
+                "elapsed_ms": float(observation.get("elapsed_ms", 0.0)),
+            }
+        return None
 
     async def _emit(
         self,

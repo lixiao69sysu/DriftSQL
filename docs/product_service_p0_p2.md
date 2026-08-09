@@ -8,8 +8,9 @@ Dashboard. It deliberately does not implement the dashboard itself.
 - P0: typed FastAPI contracts for Session, Event and Trajectory, plus catalog,
   execution and cancellation endpoints. `/openapi.json` describes every API,
   including the `text/event-stream` response.
-- P1: one process-lifetime vLLM engine, the frozen Stage-8 SFT20 LoRA loaded and
-  pinned once during application lifespan, a two-session semaphore, the same
+- P1: one process-lifetime vLLM engine, the model selected by
+  `configs/service/models.yaml` loaded and pinned once during application
+  lifespan, a two-session semaphore, the same
   DriftSQL VERL tools and state policy used in evaluation, and a replayable SSE
   wrapper around the turn-based agent loop.
 - P2: one materialized SQLite copy per Session, URI read-only mode, SQLite
@@ -31,7 +32,7 @@ POST /api/sessions
 
 POST /api/sessions/{id}/run
   -> bounded queue (two Sessions by default)
-  -> persistent vLLM + pinned SFT20 adapter
+  -> persistent vLLM + pinned GRPO Step25 adapter
   -> dynamic tool schemas from state_policy
   -> real DriftSQL tool execution
   -> append model/tool/budget/reward events
@@ -57,21 +58,21 @@ export DRIFTSQL_SERVICE_MAX_CONCURRENT_SESSIONS=2
 bash scripts/serve_service.sh
 ```
 
-The default paths are:
+The retained production paths are:
 
 - base model: `models/Qwen2.5-Coder-7B-Instruct`;
-- adapter: `checkpoints/stage8_fresh_sft_7b/global_step_20/merged/lora_adapter`;
-- frozen manifest: `reports/stage8/final_candidate/frozen_candidate.json`;
+- active adapter:
+  `checkpoints/p6_contract_observation_grpo_arm_c_7b/global_step_25/merged/lora_adapter`;
+- model catalog: `configs/service/models.yaml`;
 - metadata/event store: `data/service/driftsql_service.sqlite`;
 - per-Session databases: `data/tmp/service` (removed at terminal state).
 
-Startup verifies every adapter file hash in the frozen manifest before engine
-construction. Tensor-parallel workers use the CUDA-safe `spawn` start method,
-and async scheduling/prefix caching remain disabled to match the frozen
-candidate. `/health` changes to ready only after the adapter has been added and
-pinned.
+Startup computes the selected adapter hash before engine construction.
+Tensor-parallel workers use the CUDA-safe `spawn` start method, and async
+scheduling/prefix caching remain disabled. `/health` changes to ready only
+after the adapter has been added and pinned.
 
-Tool observations use the frozen evaluator's serving limits by default:
+Tool observations use the unified evaluator's serving limits by default:
 `execute_sql` returns at most 5 rows, Schema retrieval returns at most 3,500
 characters, and knowledge retrieval returns at most one definition. These
 limits prevent observation bloat and train/serve skew; they remain configurable
@@ -116,10 +117,15 @@ is available separately from the CPU-safe regression suite:
 CUDA_VISIBLE_DEVICES=0,2 .venv/bin/python scripts/smoke_product_service.py
 ```
 
-The real smoke completed on 2026-07-31 with the frozen SFT20 adapter: ready
+The original real smoke completed on 2026-07-31 with the then-current SFT20 adapter: ready
 health, five model calls, the expected five-tool recovery sequence, 15 stored
 events, a submitted terminal state and `task_success=true`. The machine-readable
 record is `reports/service/p0_p2_real_smoke.json`.
+
+The current product default is the P6 corrected-observation GRPO Step25 model.
+Its sanitized Base/SFT/GRPO comparison is loaded from
+`configs/service/experiments.json`; service startup no longer depends on a
+historical file under `reports/`.
 
 Acceptance coverage includes:
 

@@ -1,0 +1,34 @@
+{
+  "selected_experiment_id": "grpo-step25-seed20260810",
+  "source_protocol": "p6_scaleup_tune432_checkpoint_matrix_v1",
+  "fresh_blind_reads": 0,
+  "results": {
+    "base-qwen25-coder-7b": {
+      "category": "BASE",
+      "tasks": 432,
+      "task_success_rate": 0.13657407407407407,
+      "executable_rate": 0.13657407407407407,
+      "average_model_calls": 3.2268518518518516,
+      "average_tool_calls": 3.2268518518518516,
+      "unsafe_tasks": 0
+    },
+    "strong-sft160": {
+      "category": "SFT",
+      "tasks": 432,
+      "task_success_rate": 0.7893518518518519,
+      "executable_rate": 0.7893518518518519,
+      "average_model_calls": 4.930555555555555,
+      "average_tool_calls": 4.930555555555555,
+      "unsafe_tasks": 0
+    },
+    "grpo-step25-seed20260810": {
+      "category": "GRPO",
+      "tasks": 432,
+      "task_success_rate": 0.7986111111111112,
+      "executable_rate": 0.7986111111111112,
+      "average_model_calls": 4.918981481481482,
+      "average_tool_calls": 4.918981481481482,
+      "unsafe_tasks": 0
+    }
+  }
+}

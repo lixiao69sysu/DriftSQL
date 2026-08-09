@@ -220,7 +220,7 @@ class WandbService:
                         summary_metrics=metrics,
                     )
                 )
-            # W&B may return runs in creation order.  The Studio has limited
+            # W&B may return runs in creation order. Product clients have limited
             # vertical space, so always surface the newest experiments first;
             # otherwise old connectivity tests and failed retries can hide the
             # selected SFT/GRPO curves.

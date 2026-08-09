@@ -1,0 +1,42 @@
+models:
+  - model_id: base-qwen25-coder-7b
+    display_name: Qwen2.5-Coder-7B Base
+    category: BASE
+    base_model: models/Qwen2.5-Coder-7B-Instruct
+    notes: 原始基模；Tune432 统一基线。
+    metrics:
+      tune432_success_rate: 0.1366
+      drift_recovery_rate: 0.1528
+      safe_submit_precision: 1.0
+      average_tool_calls: 3.23
+
+  - model_id: strong-sft160
+    display_name: Recovery + Hard Replay SFT160
+    category: SFT
+    base_model: models/Qwen2.5-Coder-7B-Instruct
+    adapter: checkpoints/p6_scaleup_recovery_hard_sft_7b/global_step_160/merged/lora_adapter
+    notes: 当前强 SFT 对照模型。
+    metrics:
+      tune432_success_rate: 0.7894
+      drift_recovery_rate: 0.7472
+      safe_submit_precision: 1.0
+      average_tool_calls: 4.93
+
+  - model_id: grpo-step25-seed20260810
+    display_name: Corrected-observation GRPO Step25
+    category: GRPO
+    base_model: models/Qwen2.5-Coder-7B-Instruct
+    adapter: checkpoints/p6_contract_observation_grpo_arm_c_7b/global_step_25/merged/lora_adapter
+    notes: 当前 Tune432 最佳实验 checkpoint；跨 seed 总体增益尚未稳定复现。
+    metrics:
+      tune432_success_rate: 0.7986
+      drift_recovery_rate: 0.7583
+      safe_submit_precision: 1.0
+      average_tool_calls: 4.92
+
+  - model_id: stage8-sft20-legacy
+    display_name: Stage8 Fresh SFT20 (legacy product)
+    category: SFT
+    base_model: models/Qwen2.5-Coder-7B-Instruct
+    adapter: checkpoints/stage8_fresh_sft_7b/global_step_20/merged/lora_adapter
+    notes: 旧 Web Studio 冻结模型，仅保留历史回放兼容性。

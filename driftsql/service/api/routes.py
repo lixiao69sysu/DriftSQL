@@ -180,8 +180,9 @@ async def activate_model(
 ) -> ModelList:
     if orchestrator.active_count:
         raise HTTPException(status_code=409, detail="Cannot switch model while a Session is active")
+    allow_unavailable = orchestrator.backend.metadata.backend == "scripted"
     try:
-        model = catalog.get(body.model_id)
+        model = catalog.get(body.model_id, allow_unavailable=allow_unavailable)
     except ModelNotFoundError as error:
         raise HTTPException(status_code=404, detail=f"Unknown model: {body.model_id}") from error
     except ModelUnavailableError as error:

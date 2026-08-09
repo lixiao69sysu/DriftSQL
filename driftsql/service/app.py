@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from hmac import compare_digest
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from driftsql.drift.factory import fingerprint_query, materialize_schema_diff
 from driftsql.service.api import router
 from driftsql.service.api.routes import AUTH_COOKIE
 from driftsql.service.auth import AuthSessionStore
@@ -26,6 +30,100 @@ from driftsql.service.translation import (
 )
 
 
+def _ensure_test_scenario_catalog(settings: ServiceSettings) -> Path:
+    default_path = Path(ServiceSettings.model_fields["scenario_path"].default)
+    scenario_path = settings.scenario_path
+    if settings.environment != "test" or scenario_path.is_file():
+        return scenario_path
+    if scenario_path.resolve() != default_path.resolve():
+        return scenario_path
+
+    fixture_root = settings.temporary_root / "__service_test_fixture__"
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    source_db = fixture_root / "book_publishing_company.sqlite"
+    if not source_db.is_file():
+        with sqlite3.connect(source_db) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE authors (
+                    au_id TEXT PRIMARY KEY,
+                    name TEXT
+                );
+                INSERT INTO authors (au_id, name) VALUES ('A-1', 'Ada');
+
+                CREATE TABLE TeamsSC (
+                    year INTEGER,
+                    tmID TEXT,
+                    W INTEGER
+                );
+                INSERT INTO TeamsSC (year, tmID, W) VALUES (2024, 'ATL', 88);
+                """
+            )
+    schema_diff = {
+        "operations": [{"type": "add_column", "table": "authors", "new_name": "country", "declared_type": "TEXT"}]
+    }
+    ground_truth = "SELECT COUNT(*) AS team_count FROM TeamsSC"
+    projected = fixture_root / "book_publishing_company_v2.sqlite"
+    materialize_schema_diff(source_db, projected, schema_diff)
+    fingerprint = fingerprint_query(projected, ground_truth)
+    try:
+        projected.unlink()
+    except FileNotFoundError:
+        pass
+
+    generated = fixture_root / "tune_agent_eval.jsonl"
+    create_kwargs = {
+        "db_id": "book_publishing_company",
+        "db_version": "v2",
+        "source_db": str(source_db),
+        "schema_diff": schema_diff,
+        "query": "Count teams in the current season.",
+        "stale_sql": "SELECT * FROM TeamsSC LIMIT 1",
+        "ground_truth": ground_truth,
+        "result_fingerprint": {
+            "row_count": fingerprint.row_count,
+            "value_hash": fingerprint.value_hash,
+        },
+    }
+    record = {
+        "prompt": [
+            {"role": "system", "content": "You are a read-only SQLite recovery agent."},
+            {
+                "role": "user",
+                "content": (
+                    "## Analytics request\nCount teams in the current season.\n\n"
+                    "## Previously valid cached SQL\nSELECT * FROM TeamsSC LIMIT 1"
+                ),
+            },
+        ],
+        "extra_info": {
+            "instance_id": "service-test-add-column",
+            "db_id": "book_publishing_company",
+            "source_db": str(source_db),
+            "stale_sql": create_kwargs["stale_sql"],
+            "drift_type": "add_column",
+            "wildcard_profile": "single_table",
+            "schema_diff": schema_diff,
+            "result_fingerprint": create_kwargs["result_fingerprint"],
+            "tool_selection": [
+                "get_schema",
+                "get_schema_version",
+                "inspect_schema_diff",
+                "execute_sql",
+                "submit_solution",
+            ],
+            "tools_kwargs": {
+                "execute_sql": {
+                    "create_kwargs": create_kwargs,
+                }
+            },
+        },
+    }
+    generated.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    settings.scenario_path = generated
+    return generated
+
+
 def create_app(
     settings: ServiceSettings | None = None,
     *,
@@ -40,7 +138,7 @@ def create_app(
         repository = SQLiteSessionRepository(resolved_settings.repository_path)
         repository.initialize()
         interrupted = repository.mark_interrupted_sessions_failed()
-        catalog = ScenarioCatalog(resolved_settings.scenario_path)
+        catalog = ScenarioCatalog(_ensure_test_scenario_catalog(resolved_settings))
         catalog.load()
         experiment_catalog = ExperimentCatalog(resolved_settings.experiment_catalog_path)
         experiment_catalog.load()

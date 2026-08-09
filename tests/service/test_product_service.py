@@ -57,6 +57,17 @@ async def first_scenario(client: httpx.AsyncClient) -> dict[str, Any]:
     return response.json()[0]
 
 
+def test_service_bootstraps_default_catalog_fixture_in_test_environment(tmp_path: Path) -> None:
+    async def run() -> None:
+        backend = ScriptedModelBackend()
+        async with service_client(tmp_path, backend) as (app, client):
+            scenario = await first_scenario(client)
+            assert scenario["db_id"] == "book_publishing_company"
+            assert app.state.settings.scenario_path.is_file()
+
+    asyncio.run(run())
+
+
 async def create(client: httpx.AsyncClient, scenario_id: str) -> dict[str, Any]:
     response = await client.post("/api/sessions", json={"scenario_id": scenario_id})
     response.raise_for_status()

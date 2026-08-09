@@ -3,17 +3,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/lixiao69sysu/DriftSQL/actions/workflows/ci.yml"><img src="https://github.com/lixiao69sysu/DriftSQL/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/Code%20License-MIT-yellow.svg" alt="MIT License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+"></a>
-  <a href="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct"><img src="https://img.shields.io/badge/Base%20Model-Qwen2.5--Coder--7B-6C5CE7" alt="Qwen2.5-Coder-7B"></a>
-  <img src="https://img.shields.io/badge/Agentic%20RL-SFT%20%2B%20GRPO-8A63D2" alt="SFT and GRPO">
-</p>
-
-<p align="center">
   <a href="https://huggingface.co/datasets/lxSYSU/DriftSQL-Recovery"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-DriftSQL--Recovery-FFD21E" alt="DriftSQL-Recovery on Hugging Face"></a>
-  <img src="https://img.shields.io/badge/Tasks-3%2C152-4C8BF5" alt="3152 execution-verified tasks">
-  <img src="https://img.shields.io/badge/Databases-98-00A6A6" alt="98 databases">
   <a href="https://creativecommons.org/licenses/by-sa/4.0/"><img src="https://img.shields.io/badge/Data%20License-CC%20BY--SA%204.0-2EA44F" alt="CC BY-SA 4.0"></a>
 </p>
 

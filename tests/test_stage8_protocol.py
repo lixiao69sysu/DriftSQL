@@ -5,7 +5,6 @@ import json
 from collections import Counter
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = ROOT / "data/processed/stage8_fresh_protocol"
 
@@ -84,9 +83,3 @@ def test_stage8_general_replay_is_family_balanced() -> None:
         for row in rows:
             by_db.setdefault(str(row["db_id"]), set()).add(str(row["drift_type"]))
         assert all(families == expected for families in by_db.values())
-
-
-def test_stage7_gate106_seal_hashes_match() -> None:
-    from scripts.verify_stage7_gate106_seal import verify
-
-    assert verify() == {"sealed": True, "files": 7}

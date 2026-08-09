@@ -13,12 +13,17 @@ read-only sandbox, validate its result, and safely submit the answer. The
 project combines on-policy failure recovery data, supervised fine-tuning, and
 full-episode GRPO instead of treating SQL generation as a single-turn task.
 
+**Dataset:** [DriftSQL-Recovery on Hugging Face](https://huggingface.co/datasets/lxSYSU/DriftSQL-Recovery)
+
 ## Highlights
 
 - **Execution-verified Agent loop:** every SQL action runs against a real,
   isolated SQLite database rather than a string-matching simulator.
 - **Failure-driven training:** real on-policy failures are mined into Recovery
   SFT, Hard Replay, and GRPO datasets.
+- **Open training corpus:** DriftSQL-Recovery contains 3,152 execution-verified
+  tasks over 98 databases, 2,400 rollout outcomes, and 1,066 complete failure
+  trajectories.
 - **Drift-aware interaction:** dynamic tools cover schema versions, schema
   diffs, knowledge retrieval, clarification, execution, and final submission.
 - **Safety by construction:** read-only authorization, deadlines, rollback,
@@ -163,20 +168,49 @@ The pipeline uses open, execution-verifiable sources:
 |---|---|
 | BIRD23 Train Filtered | 6,601 clean text-to-SQL seeds over 69 SQLite databases |
 | SIX-GYM-SQLite | 5,000 SQL repair tasks with Gold SQL, tests, and 13 template databases |
-| BIRD Mini-Dev SQLite | 500 clean evaluation tasks over 11 databases disjoint from training |
-| Mini-Interact | 300 public tasks retained for qualitative interactive evaluation |
+| BIRD-Critic-SQLite | 500 tasks and database assets used for isolated Tune/Blind generation |
+| Mini-Interact | 300 public interactive tasks and database assets |
+| BIRD Mini-Dev SQLite | 500 clean tasks over 11 databases, retained for the Stage 1 baseline |
 
 DriftSQL materializes deterministic schema and metric changes from these clean
-sources. The current Dataset V2 contains 1,102 execution-verified tasks: 802
-atomic drifts, 200 compound drifts, and 100 clean negative controls. It covers
-column rename/replacement/addition, table rename, compound recovery, and
-variable interaction profiles such as schema-only, knowledge-only, must-ask,
-and direct-clean.
+sources. The resulting
+[DriftSQL-Recovery](https://huggingface.co/datasets/lxSYSU/DriftSQL-Recovery)
+dataset uses one unified Scale-up V1 protocol:
 
-Splits are enforced by `db_id`, not by random row. Train and Tune databases do
-not overlap, and Fresh Blind data is not read during training or checkpoint
-selection. Generated manifests remain compact; databases are materialized per
-episode instead of duplicating the full source corpus.
+| Dataset scale | Count |
+|---|---:|
+| Independent execution-verified tasks | 3,152 |
+| Database-isolated SQLite environments | 98 |
+| Multi-seed on-policy rollout outcomes | 2,400 |
+| Complete unique failure trajectories | 1,066 |
+| Seven-tool next-action examples | 26,539 |
+| Recovery SFT examples | 1,714 |
+| Hard Replay examples | 1,600 |
+| Full-episode GRPO records | 3,632 |
+
+The dataset covers clean controls, column addition/rename/replacement, table
+rename, compound recovery, and schema-only, knowledge-only, must-ask, and
+direct-clean interaction profiles. All splits are assigned by `db_id`, with
+zero database overlap. Final blind labels remain sealed and are not exposed in
+the public files.
+
+The Hugging Face release is a 13 MB, CC BY-SA 4.0 collection of viewer-ready
+Parquet configurations for tasks, canonical trajectories, rollout outcomes,
+failures, SFT, replay, and GRPO.
+
+Load any configuration directly:
+
+```python
+from datasets import load_dataset
+
+tasks = load_dataset("lxSYSU/DriftSQL-Recovery", "tasks")
+failures = load_dataset("lxSYSU/DriftSQL-Recovery", "failure_trajectories")
+grpo = load_dataset("lxSYSU/DriftSQL-Recovery", "grpo")
+```
+
+Raw SQLite files are not redistributed; the pinned bootstrap scripts retrieve
+upstream assets, and databases are materialized per episode instead of
+duplicating the full source corpus.
 
 Bootstrap and audit the public data:
 
@@ -187,9 +221,11 @@ Bootstrap and audit the public data:
   --dataset all --quick-check --summary-only
 ```
 
-See [Dataset V2](docs/dataset_v2.md) for composition, leakage policy, and build
-commands, and the [trajectory data survey](docs/trajectory_data_survey.md) for
-the motivation behind the executable trajectory factory.
+See [Dataset V2](docs/dataset_v2.md) for the earlier factory design and leakage
+policy, the [P6 retrospective](docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md)
+for the current Scale-up pipeline, and the
+[trajectory data survey](docs/trajectory_data_survey.md) for the motivation
+behind the executable trajectory factory.
 
 ## Training and evaluation
 
@@ -254,6 +290,7 @@ third_party/            Pinned upstream frameworks, populated locally and gitign
 
 ## Documentation
 
+- [DriftSQL-Recovery dataset](https://huggingface.co/datasets/lxSYSU/DriftSQL-Recovery)
 - [Agentic RL iteration retrospective](docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md)
 - [Stage 1 baseline report](docs/experiments/stage1_baselines_20260727.md)
 - [Dataset V2](docs/dataset_v2.md)

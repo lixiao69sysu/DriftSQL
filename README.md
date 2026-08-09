@@ -227,10 +227,8 @@ Bootstrap and audit the public data:
 ```
 
 See [Dataset V2](docs/dataset_v2.md) for the earlier factory design and leakage
-policy, the [P6 retrospective](docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md)
-for the current Scale-up pipeline, and the
-[trajectory data survey](docs/trajectory_data_survey.md) for the motivation
-behind the executable trajectory factory.
+policy, and the [trajectory data survey](docs/trajectory_data_survey.md) for
+the motivation behind the executable trajectory factory.
 
 ## Training and evaluation
 
@@ -296,7 +294,6 @@ third_party/            Pinned upstream frameworks, populated locally and gitign
 ## Documentation
 
 - [DriftSQL-Recovery dataset](https://huggingface.co/datasets/lxSYSU/DriftSQL-Recovery)
-- [Agentic RL iteration retrospective](docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md)
 - [Stage 1 baseline report](docs/experiments/stage1_baselines_20260727.md)
 - [Dataset V2](docs/dataset_v2.md)
 - [Trajectory dataset survey](docs/trajectory_data_survey.md)

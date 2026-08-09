@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/driftsql-logo.svg" alt="DriftSQL" width="456">
+</p>
+
 # DriftSQL-RL
 
 Failure-driven Agentic Reinforcement Learning for SQL enterprise analytics under

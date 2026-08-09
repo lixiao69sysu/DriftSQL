@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="456" height="111" viewBox="0 0 456 111" role="img" aria-labelledby="title desc">
+  <title id="title">DriftSQL</title>
+  <desc id="desc">Blue terminal-style DriftSQL wordmark</desc>
+  <rect width="456" height="111" rx="4" fill="#0b1220"/>
+  <g
+    font-family="DejaVu Sans Mono, Consolas, Liberation Mono, monospace"
+    font-size="14"
+    font-weight="700"
+    fill="#79c0ff"
+    stroke="#07101d"
+    stroke-width="0.7"
+    paint-order="stroke"
+    textLength="432"
+    lengthAdjust="spacingAndGlyphs"
+  >
+    <text x="12" y="18">██████╗ ██████╗ ██╗███████╗████████╗███████╗ ██████╗ ██╗</text>
+    <text x="12" y="34">██╔══██╗██╔══██╗██║██╔════╝╚══██╔══╝██╔════╝██╔═══██╗██║</text>
+    <text x="12" y="50">██║  ██║██████╔╝██║█████╗     ██║   ███████╗██║   ██║██║</text>
+    <text x="12" y="66">██║  ██║██╔══██╗██║██╔══╝     ██║   ╚════██║██║▄▄ ██║██║</text>
+    <text x="12" y="82">██████╔╝██║  ██║██║██║        ██║   ███████║╚██████╔╝███████╗</text>
+    <text x="12" y="98">╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   ╚══════╝ ╚══▀▀═╝ ╚══════╝</text>
+  </g>
+</svg>

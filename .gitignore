@@ -37,6 +37,9 @@ tmp/
 # compact acceptance evidence intended for a release.
 reports/
 
+# Private local experiment retrospective; intentionally not published.
+docs/experiments/p6_agentic_rl_iteration_retrospective_20260808.md
+
 # Framework source is reproducibly pinned in frameworks.lock.
 third_party/
 

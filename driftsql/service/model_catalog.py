@@ -88,12 +88,12 @@ class ModelCatalog:
             raise ValueError(f"No models found in {self.path}")
         self._models = models
 
-    def get(self, model_id: str) -> RuntimeModelSpec:
+    def get(self, model_id: str, *, allow_unavailable: bool = False) -> RuntimeModelSpec:
         try:
             model = self._models[model_id]
         except KeyError as error:
             raise ModelNotFoundError(model_id) from error
-        if not model.available:
+        if not allow_unavailable and not model.available:
             raise ModelUnavailableError(f"Model files are unavailable: {model_id}")
         return model
 

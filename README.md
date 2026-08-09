@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/driftsql-logo.svg" alt="DriftSQL" width="456">
+  <img src="docs/assets/driftsql-logo.svg" alt="DriftSQL" width="100%">
 </p>
 
 # DriftSQL-RL
@@ -42,7 +42,7 @@ selection.
 
 The largest gain comes from execution-verified Recovery SFT: +65.28 percentage
 points over the base model. The current GRPO checkpoint adds a smaller but
-measurable +4.62 points over the strong SFT initialization. This result is not
+measurable +1.62 points over the strong SFT initialization. This result is not
 presented as a solved RL problem: reducing paired regressions and improving
 cross-seed stability remain active work.
 
@@ -251,17 +251,6 @@ tests/                  Unit, integration, security, and regression tests
 docs/                   Dataset, experiment, deployment, and product documentation
 third_party/            Pinned upstream frameworks, populated locally and gitignored
 ```
-
-## Limitations
-
-- Most of the measured improvement currently comes from failure-driven SFT;
-  the incremental GRPO gain is modest and not yet stable across every seed.
-- Tune432 is Train-derived, database-isolated tuning data rather than the final
-  blind benchmark.
-- Mini-Interact's public release omits Gold SQL and executable test cases, so
-  it is used for qualitative demos rather than an official success-rate claim.
-- The production sandbox currently targets SQLite; other database engines need
-  dedicated authorization, isolation, and result-contract adapters.
 
 ## Documentation
 

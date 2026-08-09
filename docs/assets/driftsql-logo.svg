@@ -1,23 +1,61 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="456" height="111" viewBox="0 0 456 111" role="img" aria-labelledby="title desc">
   <title id="title">DriftSQL</title>
-  <desc id="desc">Blue terminal-style DriftSQL wordmark</desc>
+  <desc id="desc">Blue pixel-style DriftSQL wordmark</desc>
   <rect width="456" height="111" rx="4" fill="#0b1220"/>
-  <g
-    font-family="DejaVu Sans Mono, Consolas, Liberation Mono, monospace"
-    font-size="14"
-    font-weight="700"
-    fill="#79c0ff"
-    stroke="#07101d"
-    stroke-width="0.7"
-    paint-order="stroke"
-    textLength="432"
-    lengthAdjust="spacingAndGlyphs"
-  >
-    <text x="12" y="18">██████╗ ██████╗ ██╗███████╗████████╗███████╗ ██████╗ ██╗</text>
-    <text x="12" y="34">██╔══██╗██╔══██╗██║██╔════╝╚══██╔══╝██╔════╝██╔═══██╗██║</text>
-    <text x="12" y="50">██║  ██║██████╔╝██║█████╗     ██║   ███████╗██║   ██║██║</text>
-    <text x="12" y="66">██║  ██║██╔══██╗██║██╔══╝     ██║   ╚════██║██║▄▄ ██║██║</text>
-    <text x="12" y="82">██████╔╝██║  ██║██║██║        ██║   ███████║╚██████╔╝███████╗</text>
-    <text x="12" y="98">╚═════╝ ╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   ╚══════╝ ╚══▀▀═╝ ╚══════╝</text>
+
+  <defs>
+    <g id="letter-d">
+      <rect x="0" y="0" width="36" height="10"/><rect x="0" y="12" width="9" height="10"/><rect x="36" y="12" width="9" height="10"/>
+      <rect x="0" y="24" width="9" height="10"/><rect x="36" y="24" width="9" height="10"/><rect x="0" y="36" width="9" height="10"/>
+      <rect x="36" y="36" width="9" height="10"/><rect x="0" y="48" width="9" height="10"/><rect x="36" y="48" width="9" height="10"/>
+      <rect x="0" y="60" width="9" height="10"/><rect x="36" y="60" width="9" height="10"/><rect x="0" y="72" width="36" height="10"/>
+    </g>
+    <g id="letter-r">
+      <rect x="0" y="0" width="36" height="10"/><rect x="0" y="12" width="9" height="10"/><rect x="36" y="12" width="9" height="10"/>
+      <rect x="0" y="24" width="9" height="10"/><rect x="36" y="24" width="9" height="10"/><rect x="0" y="36" width="36" height="10"/>
+      <rect x="0" y="48" width="9" height="10"/><rect x="18" y="48" width="9" height="10"/><rect x="0" y="60" width="9" height="10"/>
+      <rect x="27" y="60" width="9" height="10"/><rect x="0" y="72" width="9" height="10"/><rect x="36" y="72" width="9" height="10"/>
+    </g>
+    <g id="letter-i">
+      <rect x="0" y="0" width="45" height="10"/><rect x="18" y="12" width="9" height="10"/><rect x="18" y="24" width="9" height="10"/>
+      <rect x="18" y="36" width="9" height="10"/><rect x="18" y="48" width="9" height="10"/><rect x="18" y="60" width="9" height="10"/>
+      <rect x="0" y="72" width="45" height="10"/>
+    </g>
+    <g id="letter-f">
+      <rect x="0" y="0" width="45" height="10"/><rect x="0" y="12" width="9" height="10"/><rect x="0" y="24" width="9" height="10"/>
+      <rect x="0" y="36" width="36" height="10"/><rect x="0" y="48" width="9" height="10"/><rect x="0" y="60" width="9" height="10"/>
+      <rect x="0" y="72" width="9" height="10"/>
+    </g>
+    <g id="letter-t">
+      <rect x="0" y="0" width="45" height="10"/><rect x="18" y="12" width="9" height="10"/><rect x="18" y="24" width="9" height="10"/>
+      <rect x="18" y="36" width="9" height="10"/><rect x="18" y="48" width="9" height="10"/><rect x="18" y="60" width="9" height="10"/>
+      <rect x="18" y="72" width="9" height="10"/>
+    </g>
+    <g id="letter-s">
+      <rect x="9" y="0" width="36" height="10"/><rect x="0" y="12" width="9" height="10"/><rect x="0" y="24" width="9" height="10"/>
+      <rect x="9" y="36" width="27" height="10"/><rect x="36" y="48" width="9" height="10"/><rect x="36" y="60" width="9" height="10"/>
+      <rect x="0" y="72" width="36" height="10"/>
+    </g>
+    <g id="letter-q">
+      <rect x="9" y="0" width="27" height="10"/><rect x="0" y="12" width="9" height="10"/><rect x="36" y="12" width="9" height="10"/>
+      <rect x="0" y="24" width="9" height="10"/><rect x="36" y="24" width="9" height="10"/><rect x="0" y="36" width="9" height="10"/>
+      <rect x="36" y="36" width="9" height="10"/><rect x="0" y="48" width="9" height="10"/><rect x="18" y="48" width="9" height="10"/>
+      <rect x="36" y="48" width="9" height="10"/><rect x="0" y="60" width="9" height="10"/><rect x="27" y="60" width="9" height="10"/>
+      <rect x="9" y="72" width="27" height="10"/><rect x="36" y="72" width="9" height="10"/>
+    </g>
+    <g id="letter-l">
+      <rect x="0" y="0" width="9" height="10"/><rect x="0" y="12" width="9" height="10"/><rect x="0" y="24" width="9" height="10"/>
+      <rect x="0" y="36" width="9" height="10"/><rect x="0" y="48" width="9" height="10"/><rect x="0" y="60" width="9" height="10"/>
+      <rect x="0" y="72" width="45" height="10"/>
+    </g>
+  </defs>
+
+  <g transform="translate(15 15)" fill="#164f80" stroke="#07101d" stroke-width="1">
+    <use href="#letter-d" x="3" y="4"/><use href="#letter-r" x="56" y="4"/><use href="#letter-i" x="109" y="4"/><use href="#letter-f" x="162" y="4"/>
+    <use href="#letter-t" x="215" y="4"/><use href="#letter-s" x="268" y="4"/><use href="#letter-q" x="321" y="4"/><use href="#letter-l" x="374" y="4"/>
+  </g>
+  <g transform="translate(15 15)" fill="#79c0ff" stroke="#22689f" stroke-width="1">
+    <use href="#letter-d" x="0"/><use href="#letter-r" x="53"/><use href="#letter-i" x="106"/><use href="#letter-f" x="159"/>
+    <use href="#letter-t" x="212"/><use href="#letter-s" x="265"/><use href="#letter-q" x="318"/><use href="#letter-l" x="371"/>
   </g>
 </svg>
